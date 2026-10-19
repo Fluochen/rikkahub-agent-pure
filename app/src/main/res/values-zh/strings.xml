@@ -2978,4 +2978,6 @@ HARDLINE 保护仍然生效：rm -rf /、mkfs、shutdown / reboot、向块设备
   <string name="mission_review_approve_disabled_hint">需先勾选所有验收项</string>
   <string name="mission_artifact_open_failed">无法读取文件</string>
   <string name="mission_artifact_close">关闭</string>
+  <string name="chat_drawer_load_failed">加载对话失败</string>
+  <string name="chat_drawer_retry">重试</string>
 </resources>

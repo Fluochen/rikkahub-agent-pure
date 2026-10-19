@@ -1,36 +1,31 @@
 package me.rerere.rikkahub.ui.pages.chat
 
-import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.Folder01
-import me.rerere.hugeicons.stroke.Forward02
-import me.rerere.hugeicons.stroke.Pin
-import me.rerere.hugeicons.stroke.PinOff
-import me.rerere.hugeicons.stroke.Delete01
-import me.rerere.hugeicons.stroke.PencilEdit01
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.surfaceColorAtElevation
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,21 +38,30 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.itemKey
-import me.rerere.rikkahub.R
-import me.rerere.rikkahub.data.model.Conversation
-import me.rerere.rikkahub.ui.theme.extendColors
-import me.rerere.rikkahub.runtime.util.toLocalString
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
 import kotlin.uuid.Uuid
+import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Delete01
+import me.rerere.hugeicons.stroke.Folder01
+import me.rerere.hugeicons.stroke.Forward02
+import me.rerere.hugeicons.stroke.MoreVertical
+import me.rerere.hugeicons.stroke.PencilEdit01
+import me.rerere.hugeicons.stroke.Pin
+import me.rerere.hugeicons.stroke.PinOff
+import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.model.Conversation
 
 /**
  * Represents different types of items in the conversation list
@@ -86,16 +90,20 @@ fun ConversationList(
     onRename: (Conversation) -> Unit = {},
     onPin: (Conversation) -> Unit = {},
     onMoveToAssistant: (Conversation) -> Unit = {},
-    onMoveToFolder: (Conversation) -> Unit = {}
+    onMoveToFolder: (Conversation) -> Unit = {},
+    header: (@Composable () -> Unit)? = null,
+    footer: (@Composable () -> Unit)? = null,
 ) {
     var hasScrolledToCurrent by remember(current.id) { mutableStateOf(false) }
 
-    LaunchedEffect(current.id, conversations.itemCount, hasScrolledToCurrent) {
+    val headerCount = if (header != null) 1 else 0
+    LaunchedEffect(current.id, conversations.itemCount, hasScrolledToCurrent, headerCount) {
         if (hasScrolledToCurrent) return@LaunchedEffect
-        val currentIndex = conversations.itemSnapshotList.items.indexOfFirst {
+        val snapshotIndex = conversations.itemSnapshotList.indexOfFirst {
             (it as? ConversationListItem.Item)?.conversation?.id == current.id
         }
-        if (currentIndex >= 0) {
+        if (snapshotIndex >= 0) {
+            val currentIndex = snapshotIndex + headerCount
             val isVisible = listState.layoutInfo.visibleItemsInfo.any { it.index == currentIndex }
             if (!isVisible) {
                 listState.scrollToItem(currentIndex)
@@ -110,22 +118,15 @@ fun ConversationList(
         contentPadding = contentPadding,
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        header?.let { content ->
+            item(key = "drawer_header", contentType = "controls") { content() }
+        }
         if (conversations.itemCount == 0) {
-            item {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow
-                ) {
-                    Text(
-                        text = stringResource(id = R.string.chat_page_no_conversations),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(16.dp)
-                    )
-                }
+            item(key = "list_status") {
+                ConversationListStatus(
+                    loadState = conversations.loadState.refresh,
+                    onRetry = { conversations.retry() },
+                )
             }
         }
 
@@ -173,6 +174,58 @@ fun ConversationList(
                 }
             }
         }
+        if (conversations.itemCount > 0) {
+            // A refresh failure must not turn cached conversations into an empty list.
+            if (conversations.loadState.refresh is LoadState.Error) {
+                item(key = "refresh_error") {
+                    ConversationListStatus(conversations.loadState.refresh) { conversations.retry() }
+                }
+            } else if (conversations.loadState.append is LoadState.Error ||
+                conversations.loadState.append is LoadState.Loading
+            ) {
+                item(key = "append_status") {
+                    ConversationListStatus(conversations.loadState.append) { conversations.retry() }
+                }
+            }
+        }
+
+        footer?.let { content ->
+            item(key = "drawer_footer", contentType = "controls") { content() }
+        }
+    }
+}
+
+/** Never present loading or a failed query as an empty folder. */
+@Composable
+internal fun ConversationListStatus(loadState: LoadState, onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        when (loadState) {
+            is LoadState.Loading -> {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                Text(
+                    stringResource(R.string.accessibility_loading),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            is LoadState.Error -> {
+                Text(
+                    stringResource(R.string.chat_drawer_load_failed),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onRetry) { Text(stringResource(R.string.chat_drawer_retry)) }
+            }
+            is LoadState.NotLoading -> Text(
+                stringResource(R.string.chat_page_no_conversations),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -184,14 +237,15 @@ private fun DateHeaderItem(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = 10.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+            .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 4.dp)
+            .semantics { heading() },
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -203,7 +257,8 @@ private fun PinnedHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = 10.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+            .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 4.dp)
+            .semantics { heading() },
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
@@ -223,7 +278,7 @@ private fun PinnedHeader(
 }
 
 @Composable
-private fun ConversationItem(
+internal fun ConversationItem(
     conversation: Conversation,
     selected: Boolean,
     loading: Boolean,
@@ -235,11 +290,13 @@ private fun ConversationItem(
     onMoveToFolder: (Conversation) -> Unit = {},
     onClick: (Conversation) -> Unit
 ) {
+    val loadingDescription = stringResource(R.string.accessibility_loading)
+    val moreDescription = stringResource(R.string.more_options)
     val interactionSource = remember { MutableInteractionSource() }
     val focusManager = LocalFocusManager.current
     val itemShape = RoundedCornerShape(12.dp)
     val backgroundColor = if (selected) {
-        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+        MaterialTheme.colorScheme.secondaryContainer
     } else {
         Color.Transparent
     }
@@ -261,10 +318,15 @@ private fun ConversationItem(
     Box(
         modifier = modifier
             .clip(itemShape)
+            .semantics {
+                this.selected = selected
+                if (loading) stateDescription = loadingDescription
+            }
             .combinedClickable(
                 interactionSource = interactionSource,
                 indication = LocalIndication.current,
                 onClick = { onClick(conversation) },
+                onLongClickLabel = moreDescription,
                 onLongClick = {
                     // Also clear chat input focus when the drawer is permanently visible.
                     focusManager.clearFocus(force = true)
@@ -276,7 +338,8 @@ private fun ConversationItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .heightIn(min = 64.dp)
+                .padding(start = 10.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
@@ -288,122 +351,142 @@ private fun ConversationItem(
                     .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
             )
 
-            Text(
-                text = conversation.title.ifBlank { stringResource(id = R.string.chat_page_new_message) },
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-
-            // 时间标签
-            Text(
-                text = timeText,
-                style = MaterialTheme.typography.labelSmall,
-                color = if (selected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                },
-                maxLines = 1,
-            )
-
-            // 置顶图标
-            AnimatedVisibility(conversation.isPinned) {
-                Icon(
-                    imageVector = HugeIcons.Pin,
-                    contentDescription = stringResource(R.string.accessibility_pinned),
-                    modifier = Modifier.size(12.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-            AnimatedVisibility(loading) {
-                val loadingDescription = stringResource(R.string.accessibility_loading)
-                Box(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(MaterialTheme.extendColors.green6)
-                        .size(6.dp)
-                        .semantics {
-                            contentDescription = loadingDescription
-                        }
-                )
-            }
-            DropdownMenu(
-                expanded = showDropdownMenu,
-                onDismissRequest = { showDropdownMenu = false },
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            if (conversation.isPinned) stringResource(R.string.unpin_chat) else stringResource(R.string.pin_chat)
-                        )
-                    },
-                    onClick = {
-                        onPin(conversation)
-                        showDropdownMenu = false
-                    },
-                    leadingIcon = {
+                Text(
+                    text = conversation.title.ifBlank { stringResource(R.string.chat_page_new_message) },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
+                        else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = timeText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                    if (conversation.isPinned) {
                         Icon(
-                            if (conversation.isPinned) HugeIcons.PinOff else HugeIcons.Pin,
-                            null
+                            imageVector = HugeIcons.Pin,
+                            contentDescription = stringResource(R.string.accessibility_pinned),
+                            modifier = Modifier.size(12.dp),
+                            tint = MaterialTheme.colorScheme.primary,
                         )
                     }
-                )
-
-                DropdownMenuItem(
-                    text = {
-                        Text(stringResource(id = R.string.chat_page_rename_chat))
-                    },
-                    onClick = {
-                        onRename(conversation)
-                        showDropdownMenu = false
-                    },
-                    leadingIcon = {
-                        Icon(HugeIcons.PencilEdit01, null)
+                    if (loading) {
+                        // Text, not just a green dot: distinguish running work without relying on colour.
+                        Text(
+                            text = loadingDescription,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
                     }
-                )
-
-                DropdownMenuItem(
-                    text = {
-                        Text(stringResource(R.string.chat_page_move_to_assistant))
-                    },
+                }
+            }
+            // Keep long-press as a shortcut, but make management actions discoverable.
+            Box {
+                IconButton(
                     onClick = {
-                        onMoveToAssistant(conversation)
-                        showDropdownMenu = false
+                        focusManager.clearFocus(force = true)
+                        showDropdownMenu = true
                     },
-                    leadingIcon = {
-                        Icon(HugeIcons.Forward02, null)
-                    }
-                )
+                    modifier = Modifier.size(48.dp),
+                ) {
+                    Icon(
+                        HugeIcons.MoreVertical,
+                        contentDescription = moreDescription,
+                        modifier = Modifier.size(18.dp),
+                        tint = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                DropdownMenu(
+                    expanded = showDropdownMenu,
+                    onDismissRequest = { showDropdownMenu = false },
+                ) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (conversation.isPinned) stringResource(R.string.unpin_chat) else stringResource(R.string.pin_chat)
+                            )
+                        },
+                        onClick = {
+                            onPin(conversation)
+                            showDropdownMenu = false
+                        },
+                        leadingIcon = {
+                            Icon(
+                                if (conversation.isPinned) HugeIcons.PinOff else HugeIcons.Pin,
+                                null
+                            )
+                        }
+                    )
 
-                DropdownMenuItem(
-                    text = {
-                        Text(stringResource(R.string.chat_page_move_to_folder))
-                    },
-                    onClick = {
-                        onMoveToFolder(conversation)
-                        showDropdownMenu = false
-                    },
-                    leadingIcon = {
-                        Icon(HugeIcons.Folder01, null)
-                    }
-                )
+                    DropdownMenuItem(
+                        text = {
+                            Text(stringResource(id = R.string.chat_page_rename_chat))
+                        },
+                        onClick = {
+                            onRename(conversation)
+                            showDropdownMenu = false
+                        },
+                        leadingIcon = {
+                            Icon(HugeIcons.PencilEdit01, null)
+                        }
+                    )
 
-                DropdownMenuItem(
-                    text = {
-                        Text(stringResource(id = R.string.chat_page_delete))
-                    },
-                    onClick = {
-                        onDelete(conversation)
-                        showDropdownMenu = false
-                    },
-                    leadingIcon = {
-                        Icon(HugeIcons.Delete01, null)
-                    }
-                )
+                    DropdownMenuItem(
+                        text = {
+                            Text(stringResource(R.string.chat_page_move_to_assistant))
+                        },
+                        onClick = {
+                            onMoveToAssistant(conversation)
+                            showDropdownMenu = false
+                        },
+                        leadingIcon = {
+                            Icon(HugeIcons.Forward02, null)
+                        }
+                    )
+
+                    DropdownMenuItem(
+                        text = {
+                            Text(stringResource(R.string.chat_page_move_to_folder))
+                        },
+                        onClick = {
+                            onMoveToFolder(conversation)
+                            showDropdownMenu = false
+                        },
+                        leadingIcon = {
+                            Icon(HugeIcons.Folder01, null)
+                        }
+                    )
+
+                    DropdownMenuItem(
+                        text = {
+                            Text(stringResource(id = R.string.chat_page_delete))
+                        },
+                        onClick = {
+                            onDelete(conversation)
+                            showDropdownMenu = false
+                        },
+                        leadingIcon = {
+                            Icon(HugeIcons.Delete01, null)
+                        }
+                    )
+                }
             }
         }
     }

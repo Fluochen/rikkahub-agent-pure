@@ -3263,4 +3263,6 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <string name="mission_review_approve_disabled_hint">Check every acceptance criterion first</string>
   <string name="mission_artifact_open_failed">Could not read the file</string>
   <string name="mission_artifact_close">Close</string>
+  <string name="chat_drawer_load_failed">Could not load conversations.</string>
+  <string name="chat_drawer_retry">Retry</string>
 </resources>
