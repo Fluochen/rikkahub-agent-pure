@@ -62,11 +62,7 @@ object ImportedDatabaseReconciler {
      * matching. `internal` so a JVM test can assert these stay in sync with the schema export.
      */
     internal const val EXPECTED_VERSION = 35
-
-    // TODO(批A): fill from the CI-generated schemas/.../35.json once the build uploads it
-    // (same flow as P1's 33.json / P5's 34.json — placeholder until then, reconciler test red
-    // in round 1 is expected and resolves in round 2).
-    internal const val EXPECTED_IDENTITY_HASH = "TODO_MISSION_RUNTIME_V35"
+    internal const val EXPECTED_IDENTITY_HASH = "9540ddedc97486b95bca16a8aa96d94a"
 
     /**
      * Columns that a restored file must already have for its shared schema to be considered
