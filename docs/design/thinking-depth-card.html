@@ -1,0 +1,913 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>思考深度 Hero 卡片 · 优化提案</title>
+<style>
+  :root {
+    --radius-phone: 38px;
+    --radius-sheet: 26px;
+    --radius-card: 20px;
+    --ink: #1e1c18;
+    --muted: #6b655b;
+    --page: #efeae0;
+    --line: rgba(30, 28, 24, .10);
+    --accent: #5c6b4f;
+  }
+  html[data-theme="light"] {
+    --page: #efeae0;
+    --page-ink: #1e1c18;
+    --page-muted: #6b655b;
+    --phone: #fbf8f1;
+    --sheet: #f6f1e7;
+    --card: #ece6da;
+    --pill: #e2dbcd;
+    --search: #efe9dd;
+    --on-surface: #1e1c18;
+    --on-variant: #625d53;
+    --primary: #5c6b4f;
+    --on-primary: #ffffff;
+    --primary-container: #dfe6cf;
+    --on-primary-container: #2f3a26;
+    --outline: #d8d1c2;
+    --row: #fbf8f1;
+    --shadow: rgba(40, 34, 24, .18);
+    --lvl-off: #455A64;
+    --lvl-auto: #01579B;
+    --lvl-low: #006064;
+    --lvl-med: #1B5E20;
+    --lvl-high: #7A4F00;
+    --lvl-xhigh: #A02C00;
+    --lvl-max: #B71C1C;
+    --ghost: #cfc7b7;
+  }
+  html[data-theme="dark"] {
+    --page: #151513;
+    --page-ink: #f4efe4;
+    --page-muted: #a29b8e;
+    --phone: #121211;
+    --sheet: #1e1d1a;
+    --card: #2b2925;
+    --pill: #3a3833;
+    --search: #2a2824;
+    --on-surface: #f2ede2;
+    --on-variant: #b6afa2;
+    --primary: #a9c69a;
+    --on-primary: #1b2a16;
+    --primary-container: #35452c;
+    --on-primary-container: #dcebcb;
+    --outline: #45423b;
+    --row: #242320;
+    --shadow: rgba(0, 0, 0, .55);
+    --lvl-off: #B0BEC5;
+    --lvl-auto: #4FC3F7;
+    --lvl-low: #4DD0E1;
+    --lvl-med: #81C784;
+    --lvl-high: #FFCA28;
+    --lvl-xhigh: #FFA726;
+    --lvl-max: #FF8A80;
+    --ghost: #4a463d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 15% -10%, rgba(255, 252, 242, .85), transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, rgba(228, 222, 206, .9), transparent 55%),
+      var(--page);
+    color: var(--page-ink);
+    font-family: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  html[data-theme="dark"] body {
+    background:
+      radial-gradient(1100px 600px at 10% -10%, rgba(70, 78, 60, .20), transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, rgba(90, 70, 50, .16), transparent 55%),
+      var(--page);
+  }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 48px 28px 72px; }
+  header.page { max-width: 900px; }
+  .eyebrow {
+    font-size: 11px; font-weight: 700; letter-spacing: .16em; color: var(--page-muted);
+    text-transform: uppercase; margin-bottom: 14px;
+  }
+  h1 {
+    font-size: clamp(34px, 4.6vw, 58px); line-height: 1.05; letter-spacing: -.035em;
+    margin: 0 0 18px; font-weight: 800;
+  }
+  h1 em { font-style: normal; color: var(--accent); }
+  html[data-theme="dark"] h1 em { color: #b8d3a9; }
+  .lede { font-size: 16px; line-height: 1.7; color: var(--page-muted); margin: 0; max-width: 760px; }
+  .lede b { color: var(--page-ink); font-weight: 650; }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 26px 0 8px; }
+  .seg, .btn {
+    display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 13px;
+    border-radius: 999px; border: 1px solid var(--line); background: rgba(255,255,255,.35);
+    color: var(--page-ink); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+    transition: background .18s, border-color .18s, transform .18s;
+  }
+  html[data-theme="dark"] .seg, html[data-theme="dark"] .btn { background: rgba(255,255,255,.04); }
+  .seg button {
+    border: 0; background: transparent; color: var(--page-muted); font: inherit; font-size: 12px;
+    font-weight: 600; padding: 0 8px; height: 28px; border-radius: 999px; cursor: pointer;
+  }
+  .seg button.on { background: var(--page-ink); color: var(--page); }
+  .btn:hover { transform: translateY(-1px); }
+  .btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+  html[data-theme="dark"] .btn.primary { background: #b8d3a9; color: #1b2a16; }
+  .btn .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  .btn.primary .dot { background: #fff; }
+  .hint { font-size: 11px; color: var(--page-muted); margin-left: 4px; }
+
+  .metrics {
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px;
+    margin: 30px 0 42px;
+  }
+  .metric {
+    border: 1px solid var(--line); border-radius: 16px; padding: 13px 14px 12px;
+    background: rgba(255, 255, 255, .30); backdrop-filter: blur(8px);
+  }
+  html[data-theme="dark"] .metric { background: rgba(255,255,255,.035); }
+  .metric .k { font-size: 10px; font-weight: 700; letter-spacing: .08em; color: var(--page-muted); text-transform: uppercase; }
+  .metric .v { margin-top: 7px; font-size: 15px; font-weight: 700; letter-spacing: -.01em; line-height: 1.25; }
+  .metric .v .before { color: var(--page-muted); text-decoration: line-through; text-decoration-thickness: 1px; font-weight: 600; }
+  .metric .v .arrow { color: var(--page-muted); margin: 0 5px; font-weight: 500; }
+  .metric .v .after { color: var(--accent); }
+  html[data-theme="dark"] .metric .v .after { color: #b8d3a9; }
+  .metric .s { margin-top: 4px; font-size: 10.5px; color: var(--page-muted); }
+
+  .stage { display: grid; grid-template-columns: 1fr 1fr; gap: 54px; align-items: start; }
+  .col-head { min-height: 106px; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px;
+    border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .tag.before { background: #e8d9d2; color: #7a3d2c; }
+  html[data-theme="dark"] .tag.before { background: #3b2a24; color: #e0b3a2; }
+  .tag.after { background: var(--primary-container); color: var(--on-primary-container); }
+  .col-head h2 { margin: 13px 0 6px; font-size: 20px; letter-spacing: -.02em; }
+  .col-head p { margin: 0; font-size: 12.5px; line-height: 1.65; color: var(--page-muted); max-width: 460px; }
+
+  .phone-wrap { display: flex; justify-content: center; }
+
+  /* ---------- phone ---------- */
+  .phone {
+    width: 360px; height: 700px; border-radius: var(--radius-phone); overflow: hidden;
+    background: var(--phone); position: relative; box-shadow: 0 30px 60px -22px var(--shadow), 0 0 0 1px var(--line);
+    flex: 0 0 auto;
+  }
+  .statusbar {
+    height: 30px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 22px; font-size: 10px; font-weight: 700; color: var(--on-variant);
+    position: relative; z-index: 3;
+  }
+  .statusbar .icons { letter-spacing: 2px; font-size: 8px; opacity: .8; }
+  .chat-peek { position: absolute; inset: 30px 0 auto; padding: 18px 18px 0; opacity: .55; }
+  .bubble {
+    max-width: 74%; padding: 9px 12px; border-radius: 16px; font-size: 10.5px; line-height: 1.5;
+    color: var(--on-variant); background: var(--pill); margin-bottom: 8px;
+  }
+  .bubble.right { margin-left: auto; background: var(--primary-container); color: var(--on-primary-container); }
+
+  .sheet {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 86%;
+    background: var(--sheet); border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+    box-shadow: 0 -18px 40px -26px var(--shadow);
+    padding: 8px 10px 0; display: flex; flex-direction: column; z-index: 2;
+  }
+  .handle { width: 32px; height: 4px; border-radius: 999px; background: var(--outline); margin: 0 auto 8px; flex: 0 0 auto; }
+
+  .card {
+    background: var(--card); border-radius: var(--radius-card); padding: 10px 12px;
+    position: relative; flex: 0 0 auto;
+  }
+
+  /* ---------- current card ---------- */
+  .cur-top { display: flex; align-items: center; gap: 7px; height: 48px; position: relative; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 3px; height: 26px; padding: 0 8px;
+    border-radius: 999px; background: var(--pill); color: var(--on-surface);
+    border: 0; font: inherit; font-size: 10.5px; font-weight: 600; cursor: default;
+  }
+  .pill .chev { opacity: .55; }
+  .cur-top .spacer { flex: 1; }
+  .cur-top .idea { width: 18px; height: 18px; color: var(--on-surface); opacity: .8; }
+  .cur-word { font-size: 22px; line-height: 1; font-weight: 800; letter-spacing: -.02em; color: #FFB300; }
+  .cur-track { position: relative; height: 48px; margin-top: 2px; }
+  .cur-bar { position: absolute; left: 0; right: 0; top: 20px; height: 8px; border-radius: 999px; background: var(--pill); }
+  .cur-fill {
+    position: absolute; left: 0; top: 20px; height: 8px; width: 66.7%; border-radius: 999px;
+    background: linear-gradient(90deg, #66BB6A, #66BB6A 55%, #9BDF9E 70%, #66BB6A 85%);
+    background-size: 220% 100%; animation: band 2.6s linear infinite;
+  }
+  @keyframes band { from { background-position: 0 0; } to { background-position: -220% 0; } }
+  .cur-thumb {
+    position: absolute; left: calc(66.7% - 10px); top: 14px; width: 20px; height: 20px;
+    border-radius: 50%; background: var(--primary); display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,.18);
+  }
+  .cur-thumb::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--on-primary); }
+  .spark {
+    position: absolute; width: 3px; height: 3px; border-radius: 50%; background: #8FE096; opacity: 0;
+    animation: rise 2.2s linear infinite;
+  }
+  @keyframes rise {
+    0% { transform: translateY(6px) scale(.6); opacity: 0; }
+    18% { opacity: .85; }
+    75% { opacity: .55; }
+    100% { transform: translateY(-22px) scale(1); opacity: 0; }
+  }
+  .ghost-auto {
+    position: absolute; left: calc(16.7% - 1px); top: 15px; width: 2px; height: 18px;
+    border-left: 1.5px dashed #8b96a3; opacity: .85;
+  }
+  .ghost-auto::after {
+    content: "AUTO"; position: absolute; left: -13px; top: -13px; font-size: 7px; font-weight: 800;
+    letter-spacing: .05em; color: #6b7a86;
+  }
+
+  /* ---------- proposed card ---------- */
+  .p-card { padding: 12px 12px 10px; }
+  .p-head { display: flex; align-items: center; gap: 8px; height: 48px; position: relative; }
+  .p-lead { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; }
+  .p-title { font-size: 11px; font-weight: 650; letter-spacing: .01em; color: var(--on-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .p-title .model { color: var(--on-variant); opacity: .72; font-weight: 500; }
+  .p-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+  .auto-chip {
+    display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 9px;
+    border-radius: 999px; border: 1px solid var(--outline); background: transparent;
+    color: var(--on-variant); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer;
+    transition: background .18s, color .18s, border-color .18s;
+  }
+  .auto-chip .tick { width: 0; overflow: hidden; transition: width .18s; }
+  .card.is-auto .auto-chip { background: var(--primary-container); color: var(--on-primary-container); border-color: transparent; }
+  .card.is-auto .auto-chip .tick { width: 11px; }
+  .info-btn {
+    width: 26px; height: 26px; border-radius: 50%; border: 0; background: transparent;
+    color: var(--on-variant); display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .info-btn:hover { background: var(--pill); }
+  .p-hero { display: flex; align-items: baseline; gap: 6px; height: 30px; position: relative; min-width: 0; }
+  .p-hero .idea { width: 17px; height: 17px; color: var(--lvl); align-self: center; flex: 0 0 auto; }
+  .p-word {
+    font-size: 24px; line-height: 1; font-weight: 800; letter-spacing: -.025em; color: var(--lvl);
+    white-space: nowrap;
+  }
+  .p-desc {
+    font-size: 12px; line-height: 1.3; color: var(--on-variant); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+  }
+  .p-rail { position: relative; height: 48px; margin-top: 2px; touch-action: none; cursor: pointer; }
+  .rail-line { position: absolute; left: 10px; right: 10px; top: 18px; height: 8px; border-radius: 999px; background: var(--pill); }
+  .rail-fill {
+    position: absolute; left: 10px; top: 18px; height: 8px; border-radius: 999px; width: 0;
+    background: var(--lvl); transition: width .16s ease-out, background .2s;
+  }
+  .rail-fill::after {
+    content: ""; position: absolute; inset: 0; border-radius: inherit;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.28), transparent);
+    background-size: 220% 100%; animation: band 3.2s linear infinite;
+  }
+  .node {
+    position: absolute; top: 19px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%;
+    background: var(--ghost); border: 0; padding: 0; cursor: pointer;
+    transition: transform .14s, background .14s, box-shadow .14s;
+  }
+  .node.done { background: var(--lvl); }
+  .node.active { transform: scale(1.65); background: var(--lvl); box-shadow: 0 0 0 2px var(--card); }
+  .rail-thumb {
+    position: absolute; top: 11px; width: 22px; height: 22px; margin-left: -11px; border-radius: 50%;
+    background: var(--lvl); box-shadow: 0 0 0 2px var(--card), 0 2px 6px rgba(0,0,0,.20);
+    display: flex; align-items: center; justify-content: center;
+    transition: left .16s cubic-bezier(.2,.7,.2,1), background .2s;
+    pointer-events: none;
+  }
+  .rail-thumb::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--card); opacity: .9; }
+  .rail-end {
+    position: absolute; top: 33px; font-size: 11px; font-weight: 600; color: var(--on-variant);
+    letter-spacing: .01em; pointer-events: none;
+  }
+  .rail-end.left { left: 0; }
+  .rail-end.right { right: 0; }
+  .bubble-val {
+    position: absolute; top: -8px; transform: translate(-50%, -100%); padding: 5px 8px;
+    border-radius: 8px; background: var(--on-surface); color: var(--sheet);
+    font-size: 10px; font-weight: 700; white-space: nowrap; opacity: 0; pointer-events: none;
+    transition: opacity .12s, left .16s cubic-bezier(.2,.7,.2,1);
+  }
+  .bubble-val::after {
+    content: ""; position: absolute; left: 50%; bottom: -4px; width: 8px; height: 8px;
+    background: var(--on-surface); transform: translateX(-50%) rotate(45deg); border-radius: 1px;
+  }
+  .card.is-auto .p-rail { opacity: .38; }
+  .card.is-auto .rail-thumb { opacity: 0; }
+  .card.is-auto .bubble-val { display: none; }
+  .ghost-node {
+    position: absolute; top: 16px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%;
+    border: 1.5px dashed var(--lvl); background: transparent; display: none;
+  }
+  .card.is-auto .ghost-node { display: block; }
+
+  .policies {
+    display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 4px; position: relative;
+    margin-top: 4px; flex: 0 0 auto;
+  }
+  .policies .cap { font-size: 9px; font-weight: 700; letter-spacing: .07em; color: var(--on-variant); text-transform: uppercase; }
+  .policies .global { font-size: 8.5px; color: var(--on-variant); opacity: .7; }
+  .policies .spacer { flex: 1; }
+  .policy-pill {
+    display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 7px;
+    border-radius: 999px; background: transparent; border: 1px solid var(--outline);
+    color: var(--on-variant); font: inherit; font-size: 9.5px; font-weight: 600; cursor: pointer;
+  }
+  .policy-pill b { color: var(--on-surface); font-weight: 700; }
+
+  /* ---------- search + list ---------- */
+  .search {
+    display: flex; align-items: center; gap: 8px; height: 42px; margin: 6px 0 8px; padding: 0 12px;
+    border-radius: 999px; background: var(--search); color: var(--on-variant); flex: 0 0 auto;
+    border: 1px solid var(--line);
+  }
+  .search .ic { width: 16px; height: 16px; opacity: .65; }
+  .search span { font-size: 11px; }
+  .list { display: flex; flex-direction: column; gap: 6px; overflow: hidden; flex: 1 1 auto; }
+  .row {
+    display: flex; align-items: center; gap: 10px; height: 54px; padding: 0 10px;
+    border-radius: 12px; background: var(--row); border: 1px solid transparent;
+  }
+  .row.selected { background: var(--primary-container); border-color: color-mix(in srgb, var(--primary) 22%, transparent); }
+  .model-icon {
+    width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800; color: var(--on-primary); background: var(--primary); flex: 0 0 auto;
+  }
+  .row:not(.selected) .model-icon { background: var(--pill); color: var(--on-variant); }
+  .row-main { min-width: 0; flex: 1; }
+  .row-name { font-size: 11.5px; font-weight: 700; color: var(--on-surface); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tags { display: flex; gap: 4px; margin-top: 3px; }
+  .tagm {
+    font-size: 7.5px; font-weight: 700; letter-spacing: .02em; padding: 2px 5px; border-radius: 4px;
+    background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary);
+  }
+  .row.selected .tagm { background: color-mix(in srgb, var(--on-primary-container) 12%, transparent); color: var(--on-primary-container); }
+  .heart { border: 0; background: transparent; color: var(--on-variant); font-size: 13px; opacity: .55; cursor: default; }
+  .row.selected .heart { color: var(--primary); opacity: 1; }
+  .providers { display: flex; gap: 6px; padding: 8px 2px 10px; flex: 0 0 auto; overflow: hidden; }
+  .prov {
+    display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px;
+    border-radius: 999px; border: 1px solid var(--outline); color: var(--on-variant);
+    font-size: 9px; font-weight: 600; white-space: nowrap;
+  }
+  .prov i { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); display: inline-block; }
+  .prov:nth-child(2) i { background: #0277BD; }
+  .prov:nth-child(3) i { background: #A02C00; }
+
+  /* ---------- annotations ---------- */
+  .spot {
+    position: absolute; z-index: 5; width: 17px; height: 17px; border-radius: 50%;
+    background: #1f1d18; color: #fff; font-size: 9px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 0 2px var(--card), 0 2px 6px rgba(0,0,0,.25);
+    pointer-events: none;
+  }
+  .policies .spot { background: #1f1d18; box-shadow: 0 0 0 2px var(--sheet), 0 2px 6px rgba(0,0,0,.25); }
+  body.no-annotations .spot { display: none; }
+  body.no-annotations .ghost-auto { display: none; }
+
+  .notes { margin: 22px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .notes li { display: flex; gap: 9px; font-size: 12px; line-height: 1.6; color: var(--page-muted); }
+  .notes .n {
+    flex: 0 0 auto; width: 17px; height: 17px; border-radius: 50%; background: var(--line);
+    color: var(--page-ink); font-size: 9px; font-weight: 800; display: flex; align-items: center; justify-content: center;
+    margin-top: 1px;
+  }
+  .notes b { color: var(--page-ink); font-weight: 700; }
+  .notes code, .decisions code, .lede code {
+    font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace; font-size: .92em;
+    background: rgba(30,28,24,.06); padding: 1px 5px; border-radius: 4px;
+  }
+  html[data-theme="dark"] .notes code, html[data-theme="dark"] .decisions code, html[data-theme="dark"] .lede code { background: rgba(255,255,255,.07); }
+
+  .decisions { margin-top: 54px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .decision {
+    border: 1px solid var(--line); border-radius: 18px; padding: 18px 18px 16px;
+    background: rgba(255,255,255,.28);
+  }
+  html[data-theme="dark"] .decision { background: rgba(255,255,255,.035); }
+  .decision h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--page-muted); }
+  .decision p, .decision li { font-size: 12.5px; line-height: 1.65; color: var(--page-ink); }
+  .decision ul { margin: 0; padding-left: 16px; }
+
+  footer.page { margin-top: 54px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 11px; color: var(--page-muted); display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+
+  .popover {
+    position: absolute; z-index: 8; right: 6px; top: 60px; width: 250px;
+    background: var(--phone); color: var(--on-surface); border: 1px solid var(--outline);
+    border-radius: 12px; padding: 12px 13px; box-shadow: 0 14px 30px -14px var(--shadow);
+    font-size: 10.5px; line-height: 1.6; display: none;
+  }
+  .popover b { display: block; font-size: 11px; margin-bottom: 4px; }
+  .popover.open { display: block; }
+
+  @media (max-width: 1080px) {
+    .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .stage { grid-template-columns: 1fr; gap: 48px; }
+    .col-head { min-height: 0; }
+    .decisions { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 560px) {
+    .wrap { padding: 30px 14px 50px; }
+    .metrics { grid-template-columns: 1fr 1fr; }
+    .phone { transform-origin: top center; transform: scale(.86); margin-bottom: -98px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cur-fill::after, .cur-fill, .spark, .rail-fill::after { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-idea" viewBox="0 0 24 24">
+      <path d="M9 18h6M10 21h4M8.4 14.2A6.5 6.5 0 1 1 15.6 14.2c-.9.7-1.4 1.5-1.5 2.3h-4.2c-.1-.8-.6-1.6-1.5-2.3Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M12 2v1.4M4.2 5.2l1 1M19.8 5.2l-1 1M2.5 12.6h1.4M20.1 12.6h1.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.3" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M16 16l4 4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 11v5M12 8.1v.3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+  <header class="page">
+    <div class="eyebrow">Rikkahub · Chat input / model sheet</div>
+    <h1>思考深度 Hero 卡片<br><em>优化提案</em></h1>
+    <p class="lede">
+      这张卡现在同时承担三件事：<b>当前模型的思考深度</b>、<b>全局审批模式</b>、<b>子代理派发策略</b>。
+      结果是执行层级不清、AUTO 被画在深度轴上、7 个档位在视觉上不可见。下面把职责拆开，让深度成为唯一的 hero，
+      并保留现有的 surge 身份 —— 只把颜色、刻度和动效调到可读、可触、可维护。
+    </p>
+    <div class="toolbar">
+      <div class="seg" id="themeSeg">
+        <button data-theme-btn="light" class="on">亮色</button>
+        <button data-theme-btn="dark">暗色</button>
+      </div>
+      <button class="btn" id="annotToggle">标注：开</button>
+      <button class="btn primary" id="demoBtn"><span class="dot"></span>演示拖动</button>
+      <span class="hint">拖一拖右侧轨道、点“自动”，试试提案里的吸附与气泡。</span>
+    </div>
+  </header>
+
+  <section class="metrics" aria-label="关键指标">
+    <div class="metric">
+      <div class="k">档位文字对比度 · 亮色</div>
+      <div class="v"><span class="before">1.46:1</span><span class="arrow">→</span><span class="after">5.82:1</span></div>
+      <div class="s">WCAG 大字线 3:1 / 正文 4.5:1</div>
+    </div>
+    <div class="metric">
+      <div class="k">可见档位</div>
+      <div class="v"><span class="before">0 / 7</span><span class="arrow">→</span><span class="after">6 / 6</span></div>
+      <div class="s">AUTO 从轴上升为独立模式</div>
+    </div>
+    <div class="metric">
+      <div class="k">触感反馈</div>
+      <div class="v"><span class="before">无</span><span class="arrow">→</span><span class="after">逐档</span></div>
+      <div class="s">跨档触发一次；吸附沿用 M3</div>
+    </div>
+    <div class="metric">
+      <div class="k">常驻无限动画</div>
+      <div class="v"><span class="before">3 组</span><span class="arrow">→</span><span class="after">≤ 1 组</span></div>
+      <div class="s">只在交互 / 高档位时运行</div>
+    </div>
+    <div class="metric">
+      <div class="k">实现份数</div>
+      <div class="v"><span class="before">2</span><span class="arrow">→</span><span class="after">1</span></div>
+      <div class="s">抽屉卡片与设置页共用同一控件</div>
+    </div>
+  </section>
+
+  <main class="stage">
+    <!-- ================= CURRENT ================= -->
+    <section class="col" aria-labelledby="current-title">
+      <div class="col-head">
+        <span class="tag before">现状 · 2026-10-17</span>
+        <h2 id="current-title">一条轴，三种职责</h2>
+        <p>全局审批、全局派发、按模型生效的深度，被压进同一行；深度轴把“自动”当成第二档。亮色主题下最常用的“沉思”几乎读不出来。</p>
+      </div>
+
+      <div class="phone-wrap">
+        <div class="phone">
+          <div class="statusbar"><span>9:41</span><span class="icons">▮▮▮ ◔ ▰</span></div>
+          <div class="chat-peek">
+            <div class="bubble">今天能把这份报告整理成要点吗？</div>
+            <div class="bubble right">可以。我先通读，再按章节归纳。</div>
+          </div>
+
+          <div class="sheet">
+            <div class="handle"></div>
+
+            <div class="card">
+              <div class="cur-top">
+                <span class="spot" style="left:-4px; top:-3px">1</span>
+                <button class="pill">通用 <svg class="chev" width="10" height="10"><use href="#i-chev"/></svg></button>
+                <button class="pill">常规 <svg class="chev" width="10" height="10"><use href="#i-chev"/></svg></button>
+                <span class="spacer"></span>
+                <svg class="idea"><use href="#i-idea"/></svg>
+                <span class="cur-word">沉思</span>
+                <span class="spot" style="right:-3px; top:2px">4</span>
+              </div>
+              <div class="cur-track">
+                <div class="cur-bar"></div>
+                <div class="cur-fill"></div>
+                <div class="ghost-auto"></div>
+                <div class="spark" style="left:24%; bottom:24px; animation-delay:-.2s"></div>
+                <div class="spark" style="left:38%; bottom:20px; animation-delay:-1.1s"></div>
+                <div class="spark" style="left:52%; bottom:25px; animation-delay:-.6s"></div>
+                <div class="spark" style="left:59%; bottom:18px; animation-delay:-1.7s"></div>
+                <div class="spark" style="left:48%; bottom:14px; animation-delay:-1.35s"></div>
+                <div class="cur-thumb"></div>
+                <span class="spot" style="left:calc(16.7% - 8px); top:0">2</span>
+                <span class="spot" style="left:calc(66.7% - 8px); top:-1px">3</span>
+                <span class="spot" style="left:50%; top:24px">5</span>
+              </div>
+            </div>
+
+            <div class="search"><svg class="ic"><use href="#i-search"/></svg><span>搜索模型</span></div>
+
+            <div class="list">
+              <div class="row selected">
+                <div class="model-icon">C</div>
+                <div class="row-main">
+                  <div class="row-name">Claude Sonnet 4.5</div>
+                  <div class="tags"><span class="tagm">对话</span><span class="tagm">文本 → 文本</span><span class="tagm">推理</span></div>
+                </div>
+                <button class="heart">♥</button>
+              </div>
+              <div class="row">
+                <div class="model-icon">G</div>
+                <div class="row-main">
+                  <div class="row-name">GPT-5.2</div>
+                  <div class="tags"><span class="tagm">对话</span><span class="tagm">工具</span><span class="tagm">推理</span></div>
+                </div>
+                <button class="heart">♡</button>
+              </div>
+              <div class="row">
+                <div class="model-icon">G</div>
+                <div class="row-main">
+                  <div class="row-name">Gemini 3 Pro</div>
+                  <div class="tags"><span class="tagm">对话</span><span class="tagm">图像 → 文本</span></div>
+                </div>
+                <button class="heart">♡</button>
+              </div>
+            </div>
+
+            <div class="providers"><span class="prov"><i></i>Anthropic</span><span class="prov"><i></i>OpenAI</span><span class="prov"><i></i>Google</span></div>
+          </div>
+        </div>
+      </div>
+
+      <ul class="notes">
+        <li><span class="n">1</span><span><b>两种作用域混排。</b>“通用 / 常规”是全局策略，“沉思”是按模型持久化的深度；三者没有标题、没有范围说明，用户无法知道改动会落到哪里。</span></li>
+        <li><span class="n">2</span><span><b>AUTO 不是深度。</b>它占着 <code>1/6</code> 的轴位置，<code>budgetTokens = -1</code> 只是哨兵值；从 AUTO 往右拖到 LOW，可能把“由模型决定”换成固定 1k 预算，反而更浅。</span></li>
+        <li><span class="n">3</span><span><b>7 档不可见。</b><code>steps = 5</code> 只给语义；自定义 track 不画任何刻度。吸附由 M3 的 <code>shouldAutoSnap</code> 隐式提供，但跨档没有触感，也没有就地气泡；用户只能盯着右上角的小字确认。</span></li>
+        <li><span class="n">4</span><span><b>对比度失败。</b>亮色 <code>surfaceContainerHigh</code> 上，沉思 <code>#FFB300</code> ≈ 1.46:1，快速 ≈ 1.68:1，均衡 ≈ 1.93:1；只有 MAX 的红色勉强过 3:1，而彩虹字更糟。</span></li>
+        <li><span class="n">5</span><span><b>动效常驻。</b>2 个无限 transition + 最多 18 个粒子，在抽屉打开期间持续重绘；没有“减少动画”分支，也不区分是否在拖动。</span></li>
+      </ul>
+    </section>
+
+    <!-- ================= PROPOSED ================= -->
+    <section class="col" aria-labelledby="proposed-title">
+      <div class="col-head">
+        <span class="tag after">提案 B · 深度优先</span>
+        <h2 id="proposed-title">让深度成为唯一的 hero</h2>
+        <p>AUTO 独立成模式；轴只保留 6 个真实档位。每个档位可见、可吸附、可朗读；文字用同色相的对比安全变体，surge 只做交互反馈。</p>
+      </div>
+
+      <div class="phone-wrap">
+        <div class="phone">
+          <div class="statusbar"><span>9:41</span><span class="icons">▮▮▮ ◔ ▰</span></div>
+          <div class="chat-peek">
+            <div class="bubble">今天能把这份报告整理成要点吗？</div>
+            <div class="bubble right">可以。我先通读，再按章节归纳。</div>
+          </div>
+
+          <div class="sheet">
+            <div class="handle"></div>
+
+            <div class="card p-card" id="proposedCard" style="--lvl: var(--lvl-high)">
+              <div class="p-head">
+                <div class="p-lead">
+                  <div class="p-title">思考深度 <span class="model">· Claude Sonnet 4.5</span></div>
+                  <div class="p-hero">
+                    <svg class="idea"><use href="#i-idea"/></svg>
+                    <span class="p-word" id="pWord">沉思</span>
+                    <span class="p-desc" id="pDesc">模型将使用大量推理来回答问题。</span>
+                    <span class="spot" style="left:50px; top:-7px">2</span>
+                    <span class="spot" style="right:-2px; top:-6px">4</span>
+                  </div>
+                </div>
+                <div class="p-actions">
+                  <button class="auto-chip" id="autoChip" aria-pressed="false"><svg class="tick" viewBox="0 0 24 24"><use href="#i-check"/></svg>自动</button>
+                  <button class="info-btn" id="infoBtn" aria-label="关于思考深度"><svg width="15" height="15"><use href="#i-info"/></svg></button>
+                  <span class="spot" style="right:-4px; top:-10px">1</span>
+                </div>
+              </div>
+
+              <div class="p-rail" id="pRail" role="slider" tabindex="0" aria-valuemin="1" aria-valuemax="6" aria-valuenow="4" aria-label="思考深度">
+                <div class="rail-line"></div>
+                <div class="rail-fill" id="pFill"></div>
+                <div class="ghost-node" id="ghostNode"></div>
+                <button class="node" data-i="0" aria-label="关闭"></button>
+                <button class="node" data-i="1" aria-label="快速"></button>
+                <button class="node" data-i="2" aria-label="均衡"></button>
+                <button class="node" data-i="3" aria-label="沉思"></button>
+                <button class="node" data-i="4" aria-label="研究"></button>
+                <button class="node" data-i="5" aria-label="极致"></button>
+                <div class="rail-thumb" id="pThumb"></div>
+                <div class="bubble-val" id="pBubble">沉思</div>
+                <div class="rail-end left">关闭</div>
+                <div class="rail-end right">极致</div>
+                <span class="spot" style="left:calc(60% - 8px); top:-5px">3</span>
+                <span class="spot" style="right:-5px; top:23px">6</span>
+              </div>
+
+              <div class="popover" id="infoPop">
+                <b>思考深度</b>
+                并非所有模型都支持深度调整，部分提供商还会把高档位合并成一个请求。此设置仅对当前模型生效。
+              </div>
+            </div>
+
+            <div class="policies">
+              <span class="cap">运行策略</span><span class="global">全局</span>
+              <span class="spacer"></span>
+              <button class="policy-pill">审批 <b>通用</b><svg width="9" height="9"><use href="#i-chev"/></svg></button>
+              <button class="policy-pill">派发 <b>常规</b><svg width="9" height="9"><use href="#i-chev"/></svg></button>
+              <span class="spot" style="right:-6px; top:-7px">5</span>
+            </div>
+
+            <div class="search"><svg class="ic"><use href="#i-search"/></svg><span>搜索模型</span></div>
+
+            <div class="list">
+              <div class="row selected">
+                <div class="model-icon">C</div>
+                <div class="row-main">
+                  <div class="row-name">Claude Sonnet 4.5</div>
+                  <div class="tags"><span class="tagm">对话</span><span class="tagm">文本 → 文本</span><span class="tagm">推理</span></div>
+                </div>
+                <button class="heart">♥</button>
+              </div>
+              <div class="row">
+                <div class="model-icon">G</div>
+                <div class="row-main">
+                  <div class="row-name">GPT-5.2</div>
+                  <div class="tags"><span class="tagm">对话</span><span class="tagm">工具</span><span class="tagm">推理</span></div>
+                </div>
+                <button class="heart">♡</button>
+              </div>
+            </div>
+
+            <div class="providers"><span class="prov"><i></i>Anthropic</span><span class="prov"><i></i>OpenAI</span><span class="prov"><i></i>Google</span></div>
+          </div>
+        </div>
+      </div>
+
+      <ul class="notes">
+        <li><span class="n">1</span><span><b>AUTO 变成模式。</b>一个独立的 chip（可再考虑 Switch），不再占刻度；打开时轨道降到 38% 透明度并保留上次手动档位的虚线圈。</span></li>
+        <li><span class="n">2</span><span><b>档位词 + 一句解释。</b>直接复用闲置的 <code>reasoning_*_desc</code> 字符串；模型名与“仅对此模型生效”同屏，消除作用域疑问。</span></li>
+        <li><span class="n">3</span><span><b>6 个可见节点。</b>拖动实时吸附，过档触发一次 <code>GestureThresholdActivate</code>，松手才写入；拇指上方气泡跟随，解决手指遮挡。</span></li>
+        <li><span class="n">4</span><span><b>对比安全色。</b>同一色相分别为亮/暗主题取变体：亮色沉思 <code>#7A4F00</code> ≈ 5.8:1，暗色 <code>#FFCA28</code> ≈ 8.1:1；MAX 的彩虹只留在轨道。</span></li>
+        <li><span class="n">5</span><span><b>策略降级。</b>深度卡只做深度；“运行策略 · 全局”移到卡下独立一行，保留一键访问但不再与 hero 抢第一行。</span></li>
+        <li><span class="n">6</span><span><b>可访问性。</b>补 <code>stateDescription</code>（“沉思，4/6”）、48dp 触控、RTL 镜像；TalkBack 不再只读“66 percent”。</span></li>
+      </ul>
+    </section>
+  </main>
+
+  <section class="decisions">
+    <div class="decision">
+      <h3>保留</h3>
+      <ul>
+        <li>冷 → 暖的固定色相身份，以及 MAX 的彩虹签名</li>
+        <li>7 个 <code>ReasoningLevel</code> 值与持久化格式（无数据迁移）</li>
+        <li>审批 / 派发的一键访问（只是降级到独立一行）</li>
+        <li>拖动时 hero 词实时跟随的反馈</li>
+      </ul>
+    </div>
+    <div class="decision">
+      <h3>放弃</h3>
+      <ul>
+        <li>AUTO 作为轴上的第二档</li>
+        <li>只能靠右上角小字确认档位（无节点 / 无触感）</li>
+        <li>把彩虹渐变铺在文字上（黄色段不可读）</li>
+        <li>常驻火花与 3 组无限动画</li>
+      </ul>
+    </div>
+    <div class="decision">
+      <h3>需要拍板</h3>
+      <ul>
+        <li>卡片高度预算：预计 118dp → ~150dp，是否可接受？</li>
+        <li>策略行放卡下、卡内折叠，还是收进右上角图标？</li>
+        <li>是否要做 provider 真实档位映射（Gemini 3 会把 HIGH/XHIGH/MAX 合并）？</li>
+        <li>“研究 / 极致”等文案是否统一重命名（涉及 7 个语言）？</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer class="page">
+    <span>原型仅用于方案评审，非 Compose 实现；尺寸按 360dp 宽、1x 字体绘制。</span>
+    <span>对应文档：docs/design/THINKING-DEPTH-CARD.md · 基于 7a7660e</span>
+  </footer>
+</div>
+
+<script>
+  const root = document.documentElement;
+  const labels = ['关闭', '快速', '均衡', '沉思', '研究', '极致'];
+  const keys = ['off', 'low', 'med', 'high', 'xhigh', 'max'];
+  const descs = {
+    off: '关闭推理功能，模型将直接回答问题。',
+    low: '模型将使用少量推理来回答问题。',
+    med: '模型将使用更多推理来回答问题。',
+    high: '模型将使用大量推理来回答问题。',
+    xhigh: '模型会投入更多推理，适合复杂的多步问题。',
+    max: '把当前模型可用的推理预算拉到最高。'
+  };
+  const state = { index: 3, auto: false, lastManual: 3 };
+
+  const card = document.getElementById('proposedCard');
+  const rail = document.getElementById('pRail');
+  const fill = document.getElementById('pFill');
+  const thumb = document.getElementById('pThumb');
+  const bubble = document.getElementById('pBubble');
+  const word = document.getElementById('pWord');
+  const desc = document.getElementById('pDesc');
+  const nodes = [...rail.querySelectorAll('.node')];
+  const ghost = document.getElementById('ghostNode');
+  const autoChip = document.getElementById('autoChip');
+  const infoBtn = document.getElementById('infoBtn');
+  const infoPop = document.getElementById('infoPop');
+
+  function cssVar(name) {
+    return getComputedStyle(root).getPropertyValue(name).trim();
+  }
+  function frac(i) { return i / (labels.length - 1); }
+  function colorFor(i) { return cssVar('--lvl-' + keys[i]); }
+
+  function positionNodes() {
+    nodes.forEach((n, i) => {
+      n.style.left = `calc(10px + (100% - 20px) * ${frac(i)})`;
+      n.style.top = i === state.index ? '17px' : '19px';
+    });
+  }
+
+  function render(animate = true) {
+    positionNodes();
+    const color = colorFor(state.index);
+    card.style.setProperty('--lvl', color);
+    if (state.auto) {
+      card.classList.add('is-auto');
+      word.textContent = '自动';
+      card.style.setProperty('--lvl', cssVar('--lvl-auto'));
+      desc.textContent = '由模型根据问题复杂度自行决定 · 轻触档位可手动指定';
+      autoChip.setAttribute('aria-pressed', 'true');
+      const gf = 10 + (rail.clientWidth - 20) * frac(state.lastManual);
+      ghost.style.left = gf + 'px';
+      rail.setAttribute('aria-valuenow', '1');
+      rail.setAttribute('aria-valuetext', '自动');
+    } else {
+      card.classList.remove('is-auto');
+      word.textContent = labels[state.index];
+      desc.textContent = descs[keys[state.index]];
+      autoChip.setAttribute('aria-pressed', 'false');
+      const width = (rail.clientWidth - 20) * frac(state.index);
+      fill.style.width = width + 'px';
+      thumb.style.left = (10 + width) + 'px';
+      bubble.style.left = (10 + width) + 'px';
+      bubble.textContent = labels[state.index];
+      rail.setAttribute('aria-valuenow', String(state.index + 2));
+      rail.setAttribute('aria-valuetext', labels[state.index] + '，' + (state.index + 1) + '/6');
+      nodes.forEach((n, i) => {
+        n.classList.toggle('done', i <= state.index);
+        n.classList.toggle('active', i === state.index);
+      });
+    }
+    if (!animate) {
+      fill.style.transition = 'none';
+      thumb.style.transition = 'none';
+      requestAnimationFrame(() => {
+        fill.style.transition = '';
+        thumb.style.transition = '';
+      });
+    }
+  }
+
+  function valueFromEvent(e) {
+    const rect = rail.getBoundingClientRect();
+    const x = Math.min(Math.max(e.clientX - rect.left, 10), rect.width - 10);
+    const f = (x - 10) / (rect.width - 20);
+    return Math.round(f * (labels.length - 1));
+  }
+
+  let dragging = false;
+  function select(i, haptic = true) {
+    if (i < 0 || i >= labels.length) return;
+    const changed = i !== state.index || state.auto;
+    state.index = i;
+    state.lastManual = i;
+    state.auto = false;
+    render();
+    if (changed) {
+      bubble.style.opacity = '1';
+      if (haptic && navigator.vibrate) navigator.vibrate(6);
+    }
+  }
+
+  rail.addEventListener('pointerdown', (e) => {
+    if (e.target.classList.contains('node')) return;
+    dragging = true;
+    rail.setPointerCapture(e.pointerId);
+    select(valueFromEvent(e));
+  });
+  rail.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    select(valueFromEvent(e), true);
+  });
+  rail.addEventListener('pointerup', () => {
+    dragging = false;
+    bubble.style.opacity = '0';
+  });
+  rail.addEventListener('pointercancel', () => {
+    dragging = false;
+    bubble.style.opacity = '0';
+  });
+  nodes.forEach((n) => n.addEventListener('click', (e) => {
+    e.stopPropagation();
+    select(Number(n.dataset.i));
+    bubble.style.opacity = '1';
+    setTimeout(() => { bubble.style.opacity = '0'; }, 700);
+  }));
+  rail.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { select(state.index + 1); e.preventDefault(); }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { select(state.index - 1); e.preventDefault(); }
+  });
+
+  autoChip.addEventListener('click', () => {
+    if (state.auto) {
+      select(state.lastManual);
+    } else {
+      state.lastManual = state.index;
+      state.auto = true;
+      render();
+      if (navigator.vibrate) navigator.vibrate(4);
+    }
+  });
+
+  infoBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    infoPop.classList.toggle('open');
+  });
+  document.addEventListener('click', (e) => {
+    if (!infoPop.contains(e.target) && e.target !== infoBtn) infoPop.classList.remove('open');
+  });
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+  let demoRunning = false;
+  document.getElementById('demoBtn').addEventListener('click', async () => {
+    if (demoRunning) return;
+    demoRunning = true;
+    state.auto = false;
+    const seq = [1, 2, 3, 4, 5, 3];
+    for (const i of seq) {
+      state.index = i; state.lastManual = i;
+      render();
+      bubble.style.opacity = '1';
+      if (navigator.vibrate) navigator.vibrate(5);
+      await sleep(360);
+    }
+    bubble.style.opacity = '0';
+    demoRunning = false;
+  });
+
+  document.getElementById('annotToggle').addEventListener('click', (e) => {
+    const off = document.body.classList.toggle('no-annotations');
+    e.currentTarget.textContent = off ? '标注：关' : '标注：开';
+  });
+
+  document.querySelectorAll('[data-theme-btn]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      root.dataset.theme = btn.dataset.themeBtn;
+      document.querySelectorAll('[data-theme-btn]').forEach(b => b.classList.toggle('on', b === btn));
+      render(false);
+    });
+  });
+
+  window.addEventListener('resize', () => render(false));
+  if ('ResizeObserver' in window) {
+    new ResizeObserver(() => render(false)).observe(rail);
+  }
+  requestAnimationFrame(() => render(false));
+</script>
+</body>
+</html>
