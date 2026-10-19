@@ -1645,7 +1645,7 @@ class ChatService(
         // same surface the first pass had. The report lambda persists the signal as a NOTE
         // event the MissionSupervisor consumes.
         if (runCatching { me.rerere.rikkahub.service.mission.MissionSessions.missionIdFor(conversationId.toString()) }.getOrNull() != null) {
-            addAll(
+            add(
                 buildMissionReportTool { status, note ->
                     runCatching {
                         missionEngine.reportSignal(
@@ -2087,7 +2087,7 @@ class ChatService(
         // 批 A — mission_report, mirroring the regenerate path above so both build paths
         // expose the same surface. Inert outside mission execution sessions.
         if (runCatching { me.rerere.rikkahub.service.mission.MissionSessions.missionIdFor(conversationId.toString()) }.getOrNull() != null) {
-            addAll(
+            add(
                 buildMissionReportTool { status, note ->
                     runCatching {
                         missionEngine.reportSignal(
