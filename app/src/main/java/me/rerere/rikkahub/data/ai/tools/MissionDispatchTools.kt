@@ -49,8 +49,9 @@ fun createMissionDispatchTools(
             that must happen in order — call tools sequentially for those.
 
             Every child inherits this conversation's assistant unless `assistant_id` is set.
-            The call returns only after all children finish; each child's final text stays in
-            its own conversation (use conversation_search/read to look it up if you need it).
+            The call returns only after all children finish, and each child's final text comes
+            back in the aggregate (truncated); the full text stays in the child's own
+            conversation, reachable via conversation_search/read if you need the remainder.
         """.trimIndent(),
         parameters = {
             InputSchema.Obj(
@@ -138,6 +139,7 @@ fun createMissionDispatchTools(
                             child.conversationId?.let { put("conversation_id", JsonPrimitive(it)) }
                             child.status?.let { put("status", JsonPrimitive(it.name)) }
                             child.failure?.let { put("failure", JsonPrimitive(it)) }
+                            child.result?.let { put("result", JsonPrimitive(it.truncateForParent())) }
                         })
                     }
                 })
@@ -146,3 +148,18 @@ fun createMissionDispatchTools(
         }
     )
 )
+
+/**
+ * P6 — how much of a child's final text rides back to the model in one aggregate.
+ *
+ * Six children at full length would cost more context than the fan-out saved; 1200 chars keeps
+ * a typical four-section report intact and still bounds the whole reply. The remainder stays in
+ * the child's conversation, which the aggregate points at.
+ */
+private const val CHILD_RESULT_MAX_CHARS = 1200
+
+private fun String.truncateForParent(): String = if (length <= CHILD_RESULT_MAX_CHARS) {
+    this
+} else {
+    take(CHILD_RESULT_MAX_CHARS) + "… [truncated — full text in the child's conversation]"
+}

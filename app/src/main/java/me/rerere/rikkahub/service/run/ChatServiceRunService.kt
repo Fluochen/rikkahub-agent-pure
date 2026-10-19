@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.agentrun.AgentRunRepository
 import me.rerere.rikkahub.data.agentrun.AgentRunStatus
@@ -159,13 +160,23 @@ class ChatServiceRunService(
                 flow = chatService.getGenerationJobStateFlow(handle.conversationId),
                 timeoutMs = handle.timeoutMs,
             )
+            // P6 — snapshot the child's own answer while its conversation is still around.
+            // Taken for BOTH terminal paths on purpose: a timed-out run has usually written most
+            // of its work already ("timeout != no work"), and that partial output is exactly what
+            // an orchestrating caller needs in order to decide what to salvage.
+            val finalText = lastAssistantText(handle.conversationId)
             result = if (completed) {
-                RunResult(RunStatus.COMPLETED, handle.conversationId)
+                RunResult(RunStatus.COMPLETED, handle.conversationId, finalText = finalText)
             } else {
                 // Timeout — stop the runaway generation before reporting.
                 runCatching { chatService.stopGeneration(handle.conversationId) }
                     .onFailure { runCatching { Log.w(TAG, "awaitTerminal: stopGeneration failed after timeout for run ${handle.id}", it) } }
-                RunResult(RunStatus.TIMED_OUT, handle.conversationId, "run exceeded ${handle.timeoutMs}ms")
+                RunResult(
+                    RunStatus.TIMED_OUT,
+                    handle.conversationId,
+                    "run exceeded ${handle.timeoutMs}ms",
+                    finalText = finalText,
+                )
             }
         } catch (t: Throwable) {
             result = RunResult(RunStatus.FAILED, handle.conversationId, "${t::class.simpleName}: ${t.message}")
@@ -294,4 +305,20 @@ class ChatServiceRunService(
             checkpointRepository.clear(handle.id)
         }
     }
+
+    /**
+     * P6 — the run's last assistant text, or null when the conversation is gone or the model
+     * never produced one.
+     *
+     * Best-effort by construction: this copy exists for the orchestrating caller, so a read
+     * failure must never turn a finished run into a failed one.
+     */
+    private suspend fun lastAssistantText(conversationId: Uuid): String? = runCatching {
+        conversationRepo.getConversationById(conversationId)
+            ?.currentMessages
+            ?.lastOrNull { it.role == MessageRole.ASSISTANT }
+            ?.toText()
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+    }.getOrNull()
 }

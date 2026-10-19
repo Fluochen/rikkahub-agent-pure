@@ -93,10 +93,21 @@ data class RunHandle(
 
 enum class RunStatus { COMPLETED, TIMED_OUT, FAILED, CANCELLED }
 
-/** Terminal outcome of a run. The generated text itself stays in the conversation —
- *  readers fetch it via ConversationRepository (same as the pre-P3 cron path did). */
+/** Terminal outcome of a run. */
 data class RunResult(
     val status: RunStatus,
     val conversationId: Uuid,
     val failure: String? = null,
+    /**
+     * P6 — the run's final assistant text, when the implementation can produce it without
+     * extra work.
+     *
+     * The conversation remains the authoritative copy (readers still fetch it via
+     * ConversationRepository, exactly as the pre-P3 cron path did); this field exists so an
+     * orchestrating caller — `mission_dispatch` aggregating a fan-out — can hand each child's
+     * answer straight back to the model instead of making it go and search N conversations
+     * for something the dispatcher already had in hand. Default null so every existing
+     * implementation and test keeps compiling and behaving as before.
+     */
+    val finalText: String? = null,
 )
