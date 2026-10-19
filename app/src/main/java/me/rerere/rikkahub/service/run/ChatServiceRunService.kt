@@ -10,6 +10,7 @@ import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.agentrun.AgentRunRepository
 import me.rerere.rikkahub.data.agentrun.AgentRunStatus
 import me.rerere.rikkahub.data.agentrun.RunCheckpointRepository
+import me.rerere.rikkahub.data.ai.tools.ConversationSystemAddendum
 import me.rerere.rikkahub.data.ai.tools.HeadlessConversations
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.repository.ConversationRepository
@@ -78,7 +79,7 @@ class ChatServiceRunService(
             id = Uuid.random(),
             assistantId = request.assistantId,
             newConversation = true,
-        ).copy(title = effectiveTitle)
+        ).copy(title = effectiveTitle, chatModelId = request.modelId)
 
         // Persist + wire the conversation into ChatService's generation machinery.
         conversationRepo.insertConversation(conv)
@@ -88,6 +89,12 @@ class ChatServiceRunService(
         if (request.headless) {
             runCatching { HeadlessConversations.mark(conv.id) }
         }
+
+        // P6 — an expert's prompt rides in the SYSTEM slot (the same mechanism SubAgentEngine
+        // uses) rather than being prepended to the prompt, so the archived transcript keeps a
+        // clean first user turn. Released with the headless mark on every terminal path below.
+        request.systemPrompt?.takeIf { it.isNotBlank() }
+            ?.let { runCatching { ConversationSystemAddendum.set(conv.id, it) } }
 
         // P5 — the ledger row IS the run. Its id doubles as the handle and the journal /
         // checkpoint key, which is what lets boot recovery find this run's breakpoint.
@@ -182,6 +189,7 @@ class ChatServiceRunService(
             result = RunResult(RunStatus.FAILED, handle.conversationId, "${t::class.simpleName}: ${t.message}")
         } finally {
             runCatching { HeadlessConversations.unmark(handle.conversationId) }
+            runCatching { ConversationSystemAddendum.clear(handle.conversationId) }
             ConversationRunRegistry.unbind(handle.conversationId)
             runCatching { settleLedger(handle, result) }
             runCatching {
@@ -208,6 +216,7 @@ class ChatServiceRunService(
         runCatching { chatService.stopGeneration(handle.conversationId) }
             .onFailure { runCatching { Log.w(TAG, "cancel: stopGeneration failed for run ${handle.id}", it) } }
         runCatching { HeadlessConversations.unmark(handle.conversationId) }
+        runCatching { ConversationSystemAddendum.clear(handle.conversationId) }
         ConversationRunRegistry.unbind(handle.conversationId)
         runCatching { agentRunRepository.markTerminal(handle.id, AgentRunStatus.cancelled, "cancelled by surface") }
         runCatching { checkpointRepository.clear(handle.id) }

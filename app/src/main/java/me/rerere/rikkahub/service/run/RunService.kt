@@ -77,6 +77,18 @@ data class RunRequest(
     val parentRunId: String? = null,
     /** Optional per-run step cap for the loop; null keeps the global default. */
     val maxSteps: Int? = null,
+    /**
+     * P6 — an expert's system prompt for this run, appended to the assistant's own system
+     * prompt via [me.rerere.rikkahub.data.ai.tools.ConversationSystemAddendum] — the same
+     * mechanism SubAgentEngine uses, so the transcript keeps a clean first user turn and the
+     * vector index never embeds the scaffolding. Null = no extra layer.
+     */
+    val systemPrompt: String? = null,
+    /**
+     * P6 — an expert's chat model for this run. Null = inherit the assistant's / settings'
+     * model, exactly as before.
+     */
+    val modelId: Uuid? = null,
 ) {
     companion object {
         const val DEFAULT_TIMEOUT_MS: Long = 15L * 60_000L
