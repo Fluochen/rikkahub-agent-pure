@@ -134,9 +134,6 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val currentChatModel by vm.currentChatModel.collectAsStateWithLifecycle()
     val enableWebSearch by vm.enableWebSearch.collectAsStateWithLifecycle()
     val errors by vm.errors.collectAsStateWithLifecycle()
-    // U4 — the sub-agent registry is not collected anywhere in the UI today, so a parent turn that
-    // dispatched background work had no live signal at all. Fold it into the status line the chat
-    // already shows instead of adding a second surface.
     val subAgentRegistry: SubAgentRegistry = koinInject()
     val subAgentRuns by subAgentRegistry.runs.collectAsStateWithLifecycle()
     val subAgentStatus = subAgentStatusLine(subAgentRuns)
@@ -144,47 +141,32 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
         .joinToString(separator = "  ·  ")
         .ifBlank { null }
 
-    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
-    // Shared Haze state between the chat page and the drawer: the page marks its background +
-    // message list as the blur source (hazeSource), so the drawer's glass panel refracts the
-    // page sitting behind it instead of showing an opaque block.
+    val deepSeekDrawerState = rememberDeepSeekDrawerState()
     val hazeState = rememberHazeState()
     val softwareKeyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
 
-    // Handle back press when drawer is open
-    BackHandler(enabled = drawerState.isOpen) {
-        scope.launch {
-            drawerState.close()
-        }
-    }
-
-    // Clear input focus so popup transitions cannot reopen the keyboard.
-    LaunchedEffect(drawerState.isOpen) {
-        if (drawerState.isOpen) {
+    LaunchedEffect(deepSeekDrawerState.progress) {
+        if (deepSeekDrawerState.progress > 0.1f) {
             focusManager.clearFocus(force = true)
             softwareKeyboardController?.hide()
         }
     }
 
-    @Suppress("DEPRECATION")  // LocalWindowInfo replaces this in a future Compose bump
+    @Suppress("DEPRECATION")
     val windowAdaptiveInfo = currentWindowDpSize()
     val isBigScreen =
         windowAdaptiveInfo.width > windowAdaptiveInfo.height && windowAdaptiveInfo.width >= 1100.dp
 
-    // 进入大屏（永久抽屉）模式时重置抽屉状态为关闭，
-    // 避免从横屏旋转回竖屏后，模态抽屉残留为打开状态且无法关闭（#1304）
     LaunchedEffect(isBigScreen) {
-        if (isBigScreen && drawerState.isOpen) {
-            drawerState.close()
+        if (isBigScreen && deepSeekDrawerState.progress > 0.01f) {
+            deepSeekDrawerState.close()
         }
     }
 
     val startVoiceMode = rememberVoiceModeStarter(vm, setting)
-
     val inputState = vm.inputState
 
-    // 初始化输入状态（处理传入的 files 和 text 参数）
     LaunchedEffect(files, text) {
         if (files.isNotEmpty()) {
             val localFiles = filesManager.createChatFilesByContents(files)
@@ -247,7 +229,9 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     processingStatus = mergedStatus,
                     setting = setting,
                     conversation = conversation,
-                    drawerState = drawerState,
+                    drawerState = null,
+                    deepSeekDrawerState = deepSeekDrawerState,
+                    onOpenDrawer = { scope.launch { deepSeekDrawerState.open() } },
                     navController = navController,
                     vm = vm,
                     chatListState = chatListState,
@@ -263,8 +247,9 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
         }
 
         else -> {
-            ModalNavigationDrawer(
-                drawerState = drawerState,
+            DeepSeekDrawerLayout(
+                drawerState = deepSeekDrawerState,
+                drawerWidth = 300.dp,
                 drawerContent = {
                     ChatDrawerContent(
                         navController = navController,
@@ -273,42 +258,35 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                         settings = setting,
                         hazeState = hazeState,
                     )
+                },
+                content = {
+                    ChatPageContent(
+                        onStartVoiceMode = startVoiceMode,
+                        inputState = inputState,
+                        loadingJob = loadingJob,
+                        processingStatus = mergedStatus,
+                        setting = setting,
+                        conversation = conversation,
+                        drawerState = null,
+                        deepSeekDrawerState = deepSeekDrawerState,
+                        onOpenDrawer = { scope.launch { deepSeekDrawerState.open() } },
+                        navController = navController,
+                        vm = vm,
+                        chatListState = chatListState,
+                        hazeState = hazeState,
+                        enableWebSearch = enableWebSearch,
+                        currentChatModel = currentChatModel,
+                        bigScreen = false,
+                        errors = errors,
+                        onDismissError = { vm.dismissError(it) },
+                        onClearAllErrors = { vm.clearAllErrors() },
+                    )
                 }
-            ) {
-                ChatPageContent(
-                    onStartVoiceMode = startVoiceMode,
-                    inputState = inputState,
-                    loadingJob = loadingJob,
-                    processingStatus = mergedStatus,
-                    setting = setting,
-                    conversation = conversation,
-                    drawerState = drawerState,
-                    navController = navController,
-                    vm = vm,
-                    chatListState = chatListState,
-                    hazeState = hazeState,
-                    enableWebSearch = enableWebSearch,
-                    currentChatModel = currentChatModel,
-                    bigScreen = false,
-                    errors = errors,
-                    onDismissError = { vm.dismissError(it) },
-                    onClearAllErrors = { vm.clearAllErrors() },
-                )
-            }
-            BackHandler(drawerState.isOpen) {
-                scope.launch { drawerState.close() }
-            }
+            )
         }
     }
 }
 
-/**
- * U4 — a one-line live summary of the sub-agent runs in flight, folded into the chat's existing
- * status line. Shows how many are running and how long the oldest has been going, and re-composes
- * once a second so the elapsed time keeps moving — the moving clock is the "still alive" signal
- * that was missing while a parent turn waited on background work. Returns null when none are
- * active, so the status line is exactly as before on an install that never dispatches.
- */
 @Composable
 private fun subAgentStatusLine(runs: Map<String, SubAgentRun>): String? {
     val active = runs.values.filter {
@@ -346,7 +324,9 @@ private fun ChatPageContent(
     setting: Settings,
     bigScreen: Boolean,
     conversation: Conversation,
-    drawerState: DrawerState,
+    drawerState: DrawerState? = null,
+    deepSeekDrawerState: DeepSeekDrawerState? = null,
+    onOpenDrawer: (() -> Unit)? = null,
     hazeState: HazeState,
     navController: Navigator,
     vm: ChatVM,
@@ -385,7 +365,6 @@ private fun ChatPageContent(
         }.orEmpty()
     }
 
-    // Model and search live on the input bar (model chip, search icon). The handlers stay here.
     val onUpdateSearchMode: (SearchMode) -> Unit = { mode ->
         val current = setting.getCurrentAssistant()
         val model = currentChatModel
@@ -431,13 +410,9 @@ private fun ChatPageContent(
     ) {
         AssistantBackground(
             setting = setting,
-            // Keyed so the usage line under replies can blur the wallpaper alone.
             modifier = Modifier.hazeSource(hazeState, key = CHAT_WALLPAPER_HAZE_KEY),
         )
         Scaffold(
-            // The title bar is drawn inside the content instead (see the overlay below): Scaffold
-            // places its content over the top bar, and the conversation has to scroll UNDER the
-            // title and fade out behind it.
             topBar = {},
             bottomBar = {
                 val messageQueue by vm.messageQueue.collectAsStateWithLifecycle()
@@ -460,17 +435,12 @@ private fun ChatPageContent(
                         vm.stopGeneration()
                     },
                     onSendClick = {
-                        // Settings.dummy() is still standing in for the real settings: nothing
-                        // resolves yet, so do nothing (the draft stays) rather than misreport.
                         if (setting.init) return@ChatInput
                         if (currentChatModel == null) {
                             toaster.show(
                                 context.getString(R.string.chat_select_model_first),
                                 type = ToastType.Error,
                             )
-                            // Dead-end fix: instead of only refusing, take the user to the
-                            // first-run checklist so they can see everything that still needs
-                            // setting up — and land on the "add a model" step.
                             navController.navigate(Screen.GettingStarted)
                             return@ChatInput
                         }
@@ -530,9 +500,6 @@ private fun ChatPageContent(
             },
             containerColor = Color.Transparent,
         ) { innerPadding ->
-            // The title bar rides above the message list, so its measured height is what the list
-            // has to stay clear of at rest; the rest of the inset becomes content padding, which is
-            // what lets messages scroll underneath the bar.
             var topBarHeightPx by remember { mutableStateOf(0) }
             val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
             val layoutDirection = LocalLayoutDirection.current
@@ -610,8 +577,8 @@ private fun ChatPageContent(
                             chatListState.requestScrollToItem(index)
                         }
                     },
-                    onToolApproval = { toolCallId, approved, reason, scope, toolName ->
-                        vm.handleToolApproval(toolCallId, approved, reason, scope, toolName)
+                    onToolApproval = { toolCallId, approved, reason, scopeArg, toolName ->
+                        vm.handleToolApproval(toolCallId, approved, reason, scopeArg, toolName)
                     },
                     onToolAnswer = { toolCallId, answer ->
                         vm.handleToolAnswer(toolCallId, answer)
@@ -628,9 +595,6 @@ private fun ChatPageContent(
                     },
                 )
                 val darkTheme = LocalDarkMode.current
-                // Fade scrims over the list: content dissolves as it slides under the top bar
-                // (top dissolve) and down into the floating input bar (bottom dissolve), while
-                // the liquid glass controls refract whatever passes behind them.
                 val photoShown = chatPhotoShown(
                     effectiveBackground(
                         darkTheme = darkTheme,
@@ -649,8 +613,6 @@ private fun ChatPageContent(
                 val bottomFade = bottomBarFade(darkTheme = darkTheme, photoShown = photoShown)
                 val fadeColor = MaterialTheme.colorScheme.background
 
-                // Top dissolve: extends below the title bar so incoming/outgoing messages
-                // fade in/out smoothly instead of clipping abruptly at the bar's bottom edge.
                 val topFadeExtension = 40.dp
                 val topFadeHeight = if (topBarHeightPx > 0) {
                     topBarHeight + topFadeExtension
@@ -672,7 +634,6 @@ private fun ChatPageContent(
                         )
                 )
 
-                // Bottom dissolve: smooth fade-out as messages slide down toward the bottom bar.
                 val bottomBarHeight = innerPadding.calculateBottomPadding()
                 val bottomFadeExtension = 48.dp
                 val bottomFadeHeight = bottomBarHeight + bottomFadeExtension
@@ -702,18 +663,19 @@ private fun ChatPageContent(
                             settings = setting,
                             conversation = conversation,
                             turnFooters = turnFooters,
-                            drawerState = drawerState,
+                            drawerState = drawerState ?: rememberDrawerState(initialValue = DrawerValue.Closed),
                             bigScreen = bigScreen,
                             previewMode = previewMode,
                             onClickMenu = { previewMode = !previewMode },
                             onNewChat = { navigateToChatPage(navController) },
                         )
-                    } else TopBar(
+                    } else TopBarWithDeepSeek(
                         settings = setting,
                         conversation = conversation,
                         turnFooters = turnFooters,
                         bigScreen = bigScreen,
-                        drawerState = drawerState,
+                        drawerState = drawerState ?: rememberDrawerState(initialValue = DrawerValue.Closed),
+                        deepSeekDrawerState = deepSeekDrawerState,
                         hazeState = hazeState,
                         previewMode = previewMode,
                         onNewChat = {
@@ -837,7 +799,6 @@ private fun TopBar(
 ) {
     val scope = rememberCoroutineScope()
     val toaster = LocalToaster.current
-    // 与抽屉的 Rename 菜单项共享同一个重命名对话框状态，见 ChatDrawerVM.conversationToRename
     val activity = LocalContext.current as ComponentActivity
     val drawerVm: ChatDrawerVM = koinViewModel(viewModelStoreOwner = activity)
 
@@ -871,8 +832,6 @@ private fun TopBar(
                     assistant.useGradientBackground,
                 ),
             )
-            // API 31+: a frosted pill, the same full rounding as the glass buttons beside it.
-            // Older devices keep the flat 0.86 plate.
             val titleFrost = frostedPlateSpec(titleOnPhoto, Build.VERSION.SDK_INT)
             val titleShape = if (titleFrost != null) RoundedCornerShape(percent = 50) else RoundedCornerShape(12.dp)
             Surface(
@@ -910,9 +869,6 @@ private fun TopBar(
                         overflow = TextOverflow.Ellipsis,
                     )
                     if (model != null) {
-                        // Aggregate conversation token consumption across all turns and tool calls.
-                        // UsageLedger (turnFooters) is the ground truth (includes all tool loop steps);
-                        // fallback to TokenBudgetTracker for legacy or imported conversations without ledger rows.
                         val usedTokens = remember(turnFooters, conversation) {
                             conversationUsedTokens(turnFooters, conversation)
                         }
@@ -955,10 +911,137 @@ private fun TopBar(
     )
 }
 
-/**
- * The title bar keeps its transparent background (the conversation shows through); only the three
- * buttons get a glass disc each, so they stay legible over whatever scrolls behind them.
- */
+@Composable
+private fun TopBarWithDeepSeek(
+    settings: Settings,
+    conversation: Conversation,
+    turnFooters: Map<String, TurnFooter>,
+    bigScreen: Boolean,
+    drawerState: DrawerState,
+    deepSeekDrawerState: DeepSeekDrawerState?,
+    hazeState: HazeState,
+    previewMode: Boolean,
+    onClickMenu: () -> Unit,
+    onNewChat: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val toaster = LocalToaster.current
+    val activity = LocalContext.current as ComponentActivity
+    val drawerVm: ChatDrawerVM = koinViewModel(viewModelStoreOwner = activity)
+
+    TopAppBar(
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+        navigationIcon = {
+            if (!bigScreen) {
+                GlassTopBarButton(
+                    onClick = {
+                        if (deepSeekDrawerState != null) {
+                            scope.launch { deepSeekDrawerState.open() }
+                        } else {
+                            scope.launch { drawerState.open() }
+                        }
+                    },
+                    hazeState = hazeState,
+                ) {
+                    Icon(HugeIcons.Menu03, stringResource(R.string.menu))
+                }
+            }
+        },
+        title = {
+            val editTitleWarning = stringResource(R.string.chat_page_edit_title_warning)
+            val assistant = settings.getCurrentAssistant()
+            val titleOnPhoto = looseTextNeedsPhotoPlate(
+                darkTheme = LocalDarkMode.current,
+                photoShown = chatPhotoShown(
+                    effectiveBackground(
+                        darkTheme = LocalDarkMode.current,
+                        background = assistant.background,
+                        darkBackground = assistant.darkBackground,
+                        lightBackground = assistant.lightBackground,
+                        mode = assistant.backgroundMode,
+                    ),
+                    assistant.useGradientBackground,
+                ),
+            )
+            val titleFrost = frostedPlateSpec(titleOnPhoto, Build.VERSION.SDK_INT)
+            val titleShape = if (titleFrost != null) RoundedCornerShape(percent = 50) else RoundedCornerShape(12.dp)
+            Surface(
+                onClick = {
+                    if (conversation.messageNodes.isNotEmpty()) {
+                        drawerVm.requestRenameConversation(conversation)
+                    } else {
+                        toaster.show(editTitleWarning, type = ToastType.Warning)
+                    }
+                },
+                modifier = if (titleFrost != null) {
+                    Modifier.frostedPlate(hazeState, titleShape, titleFrost)
+                } else {
+                    Modifier
+                },
+                shape = titleShape,
+                color = if (titleOnPhoto && titleFrost == null) {
+                    MaterialTheme.colorScheme.surface.copy(alpha = PHOTO_TITLE_PLATE_ALPHA)
+                } else {
+                    Color.Transparent
+                },
+            ) {
+                Column(
+                    modifier = when {
+                        titleFrost != null -> Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                        titleOnPhoto -> Modifier.padding(horizontal = 10.dp, vertical = 2.dp)
+                        else -> Modifier
+                    },
+                ) {
+                    val model = settings.resolveChatModel(conversation.chatModelId, conversation.assistantId)
+                    Text(
+                        text = conversation.title.ifBlank { stringResource(R.string.chat_page_new_chat) },
+                        maxLines = 1,
+                        style = MaterialTheme.typography.bodyMedium,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (model != null) {
+                        val usedTokens = remember(turnFooters, conversation) {
+                            conversationUsedTokens(turnFooters, conversation)
+                        }
+                        Text(
+                            text = topBarSubtitle(
+                                assistantName = assistant.name.ifBlank { stringResource(R.string.assistant_page_default_assistant) },
+                                modelName = model.displayName,
+                                usedTokens = usedTokens,
+                            ),
+                            overflow = TextOverflow.Ellipsis,
+                            maxLines = 1,
+                            color = LocalContentColor.current.copy(0.65f),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 8.sp,
+                            )
+                        )
+                    }
+                }
+            }
+        },
+        actions = {
+            GlassTopBarButton(
+                onClick = {
+                    onClickMenu()
+                },
+                hazeState = hazeState,
+            ) {
+                Icon(if (previewMode) HugeIcons.Cancel01 else HugeIcons.LeftToRightListBullet, stringResource(R.string.accessibility_chat_options))
+            }
+
+            GlassTopBarButton(
+                onClick = {
+                    onNewChat()
+                },
+                hazeState = hazeState,
+            ) {
+                Icon(HugeIcons.MessageAdd01, stringResource(R.string.chat_page_new_message))
+            }
+        },
+    )
+}
+
 @Composable
 private fun GlassTopBarButton(
     onClick: () -> Unit,
