@@ -104,13 +104,13 @@ data class MissionEntity(
     @ColumnInfo("limits_json")
     val limitsJson: String? = null,
     /** Auto-continue rounds already consumed (circuit-breaker counter; reset on user action). */
-    @ColumnInfo("resume_count")
+    @ColumnInfo("resume_count", defaultValue = "0")
     val resumeCount: Int = 0,
     /** Latest execution run id (= agent_runs.id); null before the first launch. */
     @ColumnInfo("last_run_id")
     val lastRunId: String? = null,
     /** Execution posture, stored as [MissionExecutionState]'s name. Default "idle". */
-    @ColumnInfo("execution_state")
+    @ColumnInfo("execution_state", defaultValue = "idle")
     val executionState: String = "idle",
 )
 
