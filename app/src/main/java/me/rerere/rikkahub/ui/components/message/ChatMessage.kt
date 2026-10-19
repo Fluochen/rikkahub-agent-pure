@@ -163,6 +163,7 @@ fun ChatMessage(
         fontFamily = chatFontFamily
     )
     var showActionsSheet by remember { mutableStateOf(false) }
+    var showTranslateDialog by remember(actionMessage.id) { mutableStateOf(false) }
     var showSelectCopySheet by remember { mutableStateOf(false) }
     val navController = LocalNavController.current
     val context = LocalContext.current
@@ -239,8 +240,6 @@ fun ChatMessage(
                     onOpenActionSheet = {
                         showActionsSheet = true
                     },
-                    onTranslate = onTranslate,
-                    onClearTranslation = onClearTranslation
                 )
             }
         }
@@ -292,9 +291,27 @@ fun ChatMessage(
                     navController.navigate(Screen.WebView(contentId = contentId))
                 }
             },
+            onTranslate = if (onTranslate != null) {
+                { showTranslateDialog = true }
+            } else null,
             onDismissRequest = {
                 showActionsSheet = false
             }
+        )
+    }
+
+    // Keep the dialog outside the sheet: dismissing the menu must not dispose translation UI.
+    if (showTranslateDialog && onTranslate != null) {
+        LanguageSelectionDialog(
+            onLanguageSelected = { language ->
+                showTranslateDialog = false
+                onTranslate(actionMessage, language)
+            },
+            onClearTranslation = {
+                showTranslateDialog = false
+                onClearTranslation(actionMessage)
+            },
+            onDismissRequest = { showTranslateDialog = false },
         )
     }
 
