@@ -329,7 +329,7 @@ fun ChatDrawerContent(
 
     ModalDrawerSheet(
         modifier = Modifier
-            .fillMaxWidth()
+            .fillMaxWidth(DrawerReveal.WidthFraction)
             .widthIn(max = DrawerReveal.MaxWidth)
             .shadow(
                 elevation = 12.dp,

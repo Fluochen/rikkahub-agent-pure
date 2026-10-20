@@ -311,13 +311,16 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
 
         else -> {
             val density = LocalDensity.current
-            val drawerMaxWidth = (windowAdaptiveInfo.width * DrawerReveal.WidthFraction)
-                .coerceAtMost(DrawerReveal.MaxWidth)
-            val drawerWidthPx = with(density) { drawerMaxWidth.toPx() }
+            // Width is owned by the sheet (fraction of the parent, capped). Don't pass
+            // drawerMaxWidth — that parameter is not on every Material3 revision we ship.
+            val drawerWidthPx = with(density) {
+                (windowAdaptiveInfo.width * DrawerReveal.WidthFraction)
+                    .coerceAtMost(DrawerReveal.MaxWidth)
+                    .toPx()
+            }
             val openProgress = drawerOpenProgress(drawerState, drawerWidthPx)
             ModalNavigationDrawer(
                 drawerState = drawerState,
-                drawerMaxWidth = drawerMaxWidth,
                 scrimColor = MaterialTheme.colorScheme.scrim.copy(alpha = 0.18f),
                 drawerContent = {
                     ChatDrawerContent(
