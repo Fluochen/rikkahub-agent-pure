@@ -628,7 +628,13 @@ private fun triggerSummary(spec: TriggerSpec): String = when (spec) {
         val dayText = if (spec.daysOfWeek.isEmpty()) {
             stringResource(R.string.mission_trigger_every_day)
         } else {
-            spec.daysOfWeek.sorted().joinToString("/") { stringResource(dayLabelRes(it)) }
+            // Build the labels with a plain loop: stringResource is @Composable and must not
+            // be called from a non-composable lambda such as joinToString's transform.
+            val parts = mutableListOf<String>()
+            for (day in spec.daysOfWeek.sorted()) {
+                parts += stringResource(dayLabelRes(day))
+            }
+            parts.joinToString("/")
         }
         stringResource(R.string.mission_trigger_time_cron_summary, time, dayText)
     }
