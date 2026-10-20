@@ -53,11 +53,11 @@ class TriggerRegistry(
     private val power = PowerTriggerFamily(context, triggerScope)
     private val screen = ScreenTriggerFamily(context, triggerScope)
     private val battery = BatteryTriggerFamily(context, triggerScope)
-    private val timeCron = TimeCronTriggerFamily(context, triggerScope) { id ->
+    private val timeCron = TimeCronTriggerFamily(context, triggerScope, resolver = { id ->
         workflowRepository.getById(id)?.let {
             TriggerBinding(it.definition.id, it.definition.trigger, it.definition.updatedAtMs)
         }
-    }
+    })
     private val geofence = GeofenceTriggerFamily(context, triggerScope)
     private val appForeground = AppForegroundTriggerFamily(triggerScope)
     private val notification = NotificationTriggerFamily(triggerScope)
