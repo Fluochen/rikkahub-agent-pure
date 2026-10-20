@@ -8,15 +8,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -49,7 +48,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -65,6 +66,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.ChartColumn
 import me.rerere.hugeicons.stroke.Delete01
 import me.rerere.hugeicons.stroke.Folder01
@@ -88,11 +90,13 @@ import me.rerere.rikkahub.data.model.Folder
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.ui.components.ai.AssistantPicker
 import me.rerere.rikkahub.ui.components.ui.BackupReminderCard
+import me.rerere.rikkahub.ui.components.ui.DrawerReveal
 import me.rerere.rikkahub.ui.components.ui.Tooltip
 import me.rerere.rikkahub.ui.components.ui.AssistantAvatar
 import me.rerere.rikkahub.ui.components.ui.UIAvatar
 import me.rerere.rikkahub.ui.components.ui.UpdateCard
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.context.Navigator
@@ -132,6 +136,7 @@ fun ChatDrawerContent(
     val conversations = drawerVm.conversations.collectAsLazyPagingItems()
     val folders by drawerVm.folders.collectAsStateWithLifecycle()
     val selectedFolderId by drawerVm.selectedFolderId.collectAsStateWithLifecycle()
+    val searchQuery by drawerVm.searchQuery.collectAsStateWithLifecycle()
     val archiveFolderId by drawerVm.archiveFolderId.collectAsStateWithLifecycle()
     val protectedFolderId by drawerVm.protectedFolderId.collectAsStateWithLifecycle()
     val conversationListState = rememberLazyListState(
@@ -206,16 +211,16 @@ fun ChatDrawerContent(
     val topAreaHeight = with(LocalDensity.current) { topAreaHeightPx.toDp() }
 
     // 整块抽屉做成磨砂：面板半透明，背后的聊天页被均匀虚化；上下的通透玻璃卡片与它拉开层次。
-    val drawerShape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp)
+    val drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)
     val drawerBlurStyle = HazeBlurStyle.Material3 {
-        blurRadius(24.dp)
+        blurRadius(28.dp)
     }
     // 上方功能区：玻璃卡片，固定悬浮在抽屉顶部；对话列表从其下方滚过并被折射虚化。
-    val topBarShape = RoundedCornerShape(20.dp)
+    val topBarShape = RoundedCornerShape(22.dp)
     val drawerTopArea: @Composable () -> Unit = {
         Column(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (updateChecksEnabled && !isPlayStore) {
                 UpdateCard(vm)
@@ -226,16 +231,27 @@ fun ChatDrawerContent(
                 onClick = { navController.navigate(Screen.Backup) },
             )
 
+            DrawerSearchBar(
+                query = searchQuery,
+                onQueryChange = drawerVm::setSearchQuery,
+            )
+
             // 上方功能区：一块 M3 填充卡片（阴影视作悬浮）。这里刻意不用 hazeGlass——两张固定
             // 卡片下方没有可折射的内容（对话列表为它们留了上下 padding），空背板会让玻璃把
             // 自己的边缘渲染成一圈灰边，卡片中心与边缘出现明显色差，所以直接换成纯色卡片。
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .shadow(4.dp, topBarShape, clip = false),
+                    .shadow(
+                        elevation = 8.dp,
+                        shape = topBarShape,
+                        clip = false,
+                        ambientColor = Color.Black.copy(alpha = 0.16f),
+                        spotColor = Color.Black.copy(alpha = 0.22f),
+                    ),
                 shape = topBarShape,
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                tonalElevation = 0.dp,
+                tonalElevation = 2.dp,
             ) {
                 Column(
                     modifier = Modifier.padding(vertical = 4.dp),
@@ -295,15 +311,17 @@ fun ChatDrawerContent(
                 )
             }
 
-            FolderBar(
-                protectedFolderId = protectedFolderId,
-                folders = folders,
-                selectedFolderId = selectedFolderId,
-                onSelect = { drawerVm.selectFolder(it) },
-                onCreate = { showCreateFolderDialog = true },
-                onRename = { folderToRename = it },
-                onDelete = { folderToDelete = it },
-            )
+            if (searchQuery.isBlank()) {
+                FolderBar(
+                    protectedFolderId = protectedFolderId,
+                    folders = folders,
+                    selectedFolderId = selectedFolderId,
+                    onSelect = { drawerVm.selectFolder(it) },
+                    onCreate = { showCreateFolderDialog = true },
+                    onRename = { folderToRename = it },
+                    onDelete = { folderToDelete = it },
+                )
+            }
                 }
             }
         }
@@ -311,19 +329,42 @@ fun ChatDrawerContent(
 
     ModalDrawerSheet(
         modifier = Modifier
-            .width(300.dp)
+            .fillMaxWidth()
+            .widthIn(max = DrawerReveal.MaxWidth)
+            .shadow(
+                elevation = 12.dp,
+                shape = drawerShape,
+                clip = false,
+                ambientColor = Color.Black.copy(alpha = 0.18f),
+                spotColor = Color.Black.copy(alpha = 0.28f),
+            )
             .clip(drawerShape)
             .hazeBlur(
                 input = HazeInput.Sources(hazeState),
                 style = drawerBlurStyle,
             ),
         drawerShape = drawerShape,
-        drawerContainerColor = Color.Transparent,
+        drawerContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
         drawerContentColor = MaterialTheme.colorScheme.onSurface,
         drawerTonalElevation = 0.dp,
     ) {
         // 列表铺满整块，从上下玻璃卡片下方滚过；上方功能区固定悬浮，底部功能区浮在列表之上。
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithContent {
+                    drawContent()
+                    val edge = 20.dp.toPx()
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            0f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = 0.10f),
+                            startX = size.width - edge,
+                            endX = size.width,
+                        )
+                    )
+                },
+        ) {
             ConversationList(
                 current = current,
                 conversations = conversations,
@@ -383,10 +424,16 @@ fun ChatDrawerContent(
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .shadow(4.dp, bottomBarShape, clip = false),
+                            .shadow(
+                                elevation = 8.dp,
+                                shape = bottomBarShape,
+                                clip = false,
+                                ambientColor = Color.Black.copy(alpha = 0.16f),
+                                spotColor = Color.Black.copy(alpha = 0.22f),
+                            ),
                         shape = bottomBarShape,
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        tonalElevation = 0.dp,
+                        tonalElevation = 2.dp,
                     ) {
                         Column(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
@@ -875,6 +922,73 @@ private fun DrawerActions(
 }
 
 @Composable
+private fun DrawerSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val searchShape = RoundedCornerShape(24.dp)
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .shadow(
+                elevation = 6.dp,
+                shape = searchShape,
+                clip = false,
+                ambientColor = Color.Black.copy(alpha = 0.12f),
+                spotColor = Color.Black.copy(alpha = 0.18f),
+            ),
+        shape = searchShape,
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        tonalElevation = 1.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(
+                imageVector = HugeIcons.Search01,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Box(modifier = Modifier.weight(1f)) {
+                if (query.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.chat_page_search_chats),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        color = MaterialTheme.colorScheme.onSurface,
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                )
+            }
+            if (query.isNotEmpty()) {
+                Icon(
+                    imageVector = HugeIcons.Cancel01,
+                    contentDescription = stringResource(R.string.accessibility_clear_text),
+                    modifier = Modifier
+                        .size(16.dp)
+                        .clickable { onQueryChange("") },
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun DrawerShortcut(
     icon: ImageVector,
     label: String,
@@ -1033,10 +1147,12 @@ private fun FolderChip(
     Surface(
         shape = CircleShape,
         color = if (selected) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
         } else {
             Color.Transparent
         },
+        shadowElevation = if (selected) 2.dp else 0.dp,
+        tonalElevation = if (selected) 1.dp else 0.dp,
         modifier = Modifier
             .clip(CircleShape)
             .combinedClickable(

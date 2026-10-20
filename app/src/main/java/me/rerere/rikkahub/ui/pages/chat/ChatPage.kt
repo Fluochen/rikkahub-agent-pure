@@ -70,6 +70,9 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.glass.hazeGlass
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import me.rerere.rikkahub.ui.components.ui.DrawerReveal
+import me.rerere.rikkahub.ui.components.ui.drawerOpenProgress
+import me.rerere.rikkahub.ui.components.ui.drawerRevealContent
 import me.rerere.rikkahub.ui.components.ui.rikkaGlassStyle
 import me.rerere.rikkahub.ui.theme.LocalDarkMode
 import kotlinx.coroutines.Job
@@ -266,7 +269,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     modifier = Modifier
                         .fillMaxSize()
                         .workbenchRightEdgeSwipe(
-                            enabled = !workbenchDrawerState.isOpen,
+                            enabled = !workbenchDrawerState.isOpen && drawerState.isClosed,
                             onOpen = { scope.launch { workbenchDrawerState.open() } },
                         ),
                 ) {
@@ -307,8 +310,15 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
         }
 
         else -> {
+            val density = LocalDensity.current
+            val drawerMaxWidth = (windowAdaptiveInfo.width * DrawerReveal.WidthFraction)
+                .coerceAtMost(DrawerReveal.MaxWidth)
+            val drawerWidthPx = with(density) { drawerMaxWidth.toPx() }
+            val openProgress = drawerOpenProgress(drawerState, drawerWidthPx)
             ModalNavigationDrawer(
                 drawerState = drawerState,
+                drawerMaxWidth = drawerMaxWidth,
+                scrimColor = MaterialTheme.colorScheme.scrim.copy(alpha = 0.18f),
                 drawerContent = {
                     ChatDrawerContent(
                         navController = navController,
@@ -319,26 +329,44 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     )
                 }
             ) {
-                ChatPageContent(
-                    onStartVoiceMode = startVoiceMode,
-                    inputState = inputState,
-                    loadingJob = loadingJob,
-                    processingStatus = mergedStatus,
-                    setting = setting,
-                    conversation = conversation,
-                    drawerState = drawerState,
-                    navController = navController,
-                    vm = vm,
-                    chatListState = chatListState,
-                    hazeState = hazeState,
-                    enableWebSearch = enableWebSearch,
-                    currentChatModel = currentChatModel,
-                    bigScreen = false,
-                    errors = errors,
-                    onDismissError = { vm.dismissError(it) },
-                    onClearAllErrors = { vm.clearAllErrors() },
-                    onOpenWorkbench = { scope.launch { workbenchDrawerState.open() } },
-                )
+                // Backdrop shows through the card's rounded corners; the chat itself recedes
+                // into a tilted, elevated slab as the drawer comes in from the left.
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surfaceDim),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .drawerRevealContent(
+                                progress = openProgress,
+                                drawerWidthPx = drawerWidthPx,
+                                density = density.density,
+                            ),
+                    ) {
+                        ChatPageContent(
+                            onStartVoiceMode = startVoiceMode,
+                            inputState = inputState,
+                            loadingJob = loadingJob,
+                            processingStatus = mergedStatus,
+                            setting = setting,
+                            conversation = conversation,
+                            drawerState = drawerState,
+                            navController = navController,
+                            vm = vm,
+                            chatListState = chatListState,
+                            hazeState = hazeState,
+                            enableWebSearch = enableWebSearch,
+                            currentChatModel = currentChatModel,
+                            bigScreen = false,
+                            errors = errors,
+                            onDismissError = { vm.dismissError(it) },
+                            onClearAllErrors = { vm.clearAllErrors() },
+                            onOpenWorkbench = { scope.launch { workbenchDrawerState.open() } },
+                        )
+                    }
+                }
             }
             BackHandler(drawerState.isOpen) {
                 scope.launch { drawerState.close() }

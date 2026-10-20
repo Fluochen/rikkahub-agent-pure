@@ -55,6 +55,10 @@ class ChatDrawerVM(
     private val _selectedFolderId = MutableStateFlow<Uuid?>(null)
     val selectedFolderId: StateFlow<Uuid?> = _selectedFolderId.asStateFlow()
 
+    // 抽屉内标题搜索。空白时走文件夹筛选；有字时在当前助手的全部对话里搜标题。
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
     // 重命名对话框的目标会话，跨抽屉的两个入口（菜单项 + 顶部标题点击）共享，
     // 保证两者打开同一个对话框、走同一条提交路径
     private val _conversationToRename = MutableStateFlow<Conversation?>(null)
@@ -66,14 +70,18 @@ class ChatDrawerVM(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val conversations: Flow<PagingData<ConversationListItem>> =
-        combine(assistantIdFlow, _selectedFolderId) { assistantId, folderId ->
-            assistantId to folderId
+        combine(assistantIdFlow, _selectedFolderId, _searchQuery) { assistantId, folderId, query ->
+            Triple(assistantId, folderId, query)
         }
-            .flatMapLatest { (assistantId, folderId) ->
-                if (folderId == null) {
-                    conversationRepo.getUnfiledConversationsOfAssistantPaging(assistantId)
-                } else {
-                    conversationRepo.getConversationsOfFolderPaging(folderId)
+            .flatMapLatest { (assistantId, folderId, query) ->
+                val trimmed = query.trim()
+                when {
+                    trimmed.isNotEmpty() ->
+                        conversationRepo.searchConversationsOfAssistantPaging(assistantId, trimmed)
+                    folderId == null ->
+                        conversationRepo.getUnfiledConversationsOfAssistantPaging(assistantId)
+                    else ->
+                        conversationRepo.getConversationsOfFolderPaging(folderId)
                 }
             }
             .map { pagingData ->
@@ -140,6 +148,7 @@ class ChatDrawerVM(
         viewModelScope.launch {
             assistantIdFlow.collect {
                 _selectedFolderId.value = null
+                _searchQuery.value = ""
             }
         }
     }
@@ -151,6 +160,10 @@ class ChatDrawerVM(
 
     fun selectFolder(folderId: Uuid?) {
         _selectedFolderId.value = folderId
+    }
+
+    fun setSearchQuery(query: String) {
+        _searchQuery.value = query
     }
 
     /**

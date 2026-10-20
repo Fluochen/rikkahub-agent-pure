@@ -30,7 +30,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -40,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
@@ -108,7 +108,7 @@ fun ConversationList(
         state = listState,
         modifier = modifier.padding(horizontal = 8.dp),
         contentPadding = contentPadding,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (conversations.itemCount == 0) {
             item {
@@ -190,8 +190,8 @@ private fun DateHeaderItem(
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f)
         )
     }
 }
@@ -210,14 +210,14 @@ private fun PinnedHeader(
             imageVector = HugeIcons.Pin,
             contentDescription = null,
             modifier = Modifier.size(14.dp),
-            tint = MaterialTheme.colorScheme.primary
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.size(6.dp))
         Text(
             text = stringResource(R.string.pinned_chats),
             style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f)
         )
     }
 }
@@ -237,9 +237,9 @@ private fun ConversationItem(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val focusManager = LocalFocusManager.current
-    val itemShape = RoundedCornerShape(12.dp)
+    val itemShape = RoundedCornerShape(16.dp)
     val backgroundColor = if (selected) {
-        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
     } else {
         Color.Transparent
     }
@@ -260,6 +260,19 @@ private fun ConversationItem(
     }
     Box(
         modifier = modifier
+            .then(
+                if (selected) {
+                    Modifier.shadow(
+                        elevation = 3.dp,
+                        shape = itemShape,
+                        clip = false,
+                        ambientColor = Color.Black.copy(alpha = 0.10f),
+                        spotColor = Color.Black.copy(alpha = 0.14f),
+                    )
+                } else {
+                    Modifier
+                }
+            )
             .clip(itemShape)
             .combinedClickable(
                 interactionSource = interactionSource,
@@ -276,7 +289,7 @@ private fun ConversationItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = 12.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
