@@ -670,6 +670,35 @@ class MissionSupervisorTest {
         assertEquals("本轮交付：电源事件周报已更新", notice.second)
     }
 
+    @Test
+    fun `a round that ended while waiting for approval is not continued`() = runBlocking {
+        val fx = Fixture()
+        fx.seed(
+            mission(
+                id = "m17",
+                conversationId = CONV1,
+                executionState = MissionExecutionState.WAITING_APPROVAL.name,
+                lastRunId = "r17",
+            )
+        )
+        fx.runStatuses["r17"] = "succeeded"
+        val finished = fx.finishedEvent(runId = "r17", missionId = "m17")
+
+        fx.supervisor.handleRunFinished(finished)
+
+        val row = fx.missionDao.getById("m17")!!
+        assertEquals("still the same round", MissionStatus.ACTIVE.name, row.status)
+        assertEquals(
+            "the posture stays parked on the approval",
+            MissionExecutionState.WAITING_APPROVAL.name,
+            row.executionState,
+        )
+        assertTrue(
+            "a pending approval must never trigger a parallel round",
+            fx.runService.submitted.isEmpty(),
+        )
+    }
+
     // ---------------------------------------------------------------- completion gate (批 D)
 
     @Test

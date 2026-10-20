@@ -209,6 +209,11 @@ class MissionSupervisor(
                 missionRepository.updateExecutionState(missionId, MissionExecutionState.IDLE)
                 return
             }
+            // 批 E — the round is parked on a user approval, not finished. The generation
+            // job may end while the tool waits (the loop breaks), but the work resumes from
+            // the same conversation once the approval is decided; auto-continuing here would
+            // race a pending tool and duplicate the round.
+            if (mission.executionStateEnum == MissionExecutionState.WAITING_APPROVAL) return
 
             evaluateAndAct(mission, runId)
         }

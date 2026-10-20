@@ -220,6 +220,46 @@ class MissionEngine(
     }
 
     /**
+     * 批 E — the generation loop just parked this turn because [toolName] needs the user's
+     * approval. Flips a RUNNING mission to WAITING_APPROVAL and journals a NOTE, so the
+     * workbench shows "waiting for approval" instead of a run that looks alive but idle.
+     *
+     * Idempotent by posture: it only acts on RUNNING, so a second pending tool in the same
+     * step (or a replay) cannot duplicate the event, and a mission the user already stopped
+     * (IDLE) is never resurrected by a late callback. Best-effort like every engine hook.
+     */
+    suspend fun onAwaitingApproval(conversationId: String, toolName: String) {
+        runCatching {
+            val missionId = missionIdFor(conversationId) ?: return@runCatching
+            val mission = repository.getById(missionId) ?: return@runCatching
+            if (mission.executionStateEnum != MissionExecutionState.RUNNING) return@runCatching
+            repository.updateExecutionState(missionId, MissionExecutionState.WAITING_APPROVAL)
+            repository.logEvent(
+                missionId = missionId,
+                type = RunEventType.NOTE,
+                title = "awaiting_approval",
+                detail = toolName,
+                conversationId = conversationId,
+                runId = mission.lastRunId,
+            )
+        }.onFailure { Log.w(TAG, "onAwaitingApproval failed for $toolName", it) }
+    }
+
+    /**
+     * 批 E — the user (or a timeout path) resolved the pending approval: flip a mission that
+     * is WAITING_APPROVAL back to RUNNING. Only that posture is touched — an IDLE mission
+     * stays parked, and a run without a bound mission is a silent no-op.
+     */
+    suspend fun onApprovalResolved(conversationId: String) {
+        runCatching {
+            val missionId = missionIdFor(conversationId) ?: return@runCatching
+            val mission = repository.getById(missionId) ?: return@runCatching
+            if (mission.executionStateEnum != MissionExecutionState.WAITING_APPROVAL) return@runCatching
+            repository.updateExecutionState(missionId, MissionExecutionState.RUNNING)
+        }.onFailure { Log.w(TAG, "onApprovalResolved failed", it) }
+    }
+
+    /**
      * Hook called when a generation turn finishes. Logs a MILESTONE event on
      * the bound mission's timeline.
      */
