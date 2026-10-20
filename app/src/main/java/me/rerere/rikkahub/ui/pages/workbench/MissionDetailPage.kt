@@ -435,7 +435,11 @@ fun MissionDetailPage(missionId: String) {
                         style = MaterialTheme.typography.titleSmall,
                     )
                 }
-                items(artifacts, key = { it.id }) { artifact ->
+                // Keys are namespaced: an Artifact is a projection of an ARTIFACT event, so its
+                // id IS that event's id. Using the raw id here would collide with the same event
+                // rendered in the timeline section below — one LazyColumn, two items with the
+                // same key → IllegalArgumentException at measure time.
+                items(artifacts, key = { "artifact:${it.id}" }) { artifact ->
                     ArtifactRow(
                         artifact = artifact,
                         expanded = expandedArtifactId == artifact.id,
@@ -488,7 +492,7 @@ fun MissionDetailPage(missionId: String) {
                         style = MaterialTheme.typography.titleSmall,
                     )
                 }
-                items(timeline, key = { it.id }) { event ->
+                items(timeline, key = { "event:${it.id}" }) { event ->
                     TimelineRow(event = event)
                 }
             }
