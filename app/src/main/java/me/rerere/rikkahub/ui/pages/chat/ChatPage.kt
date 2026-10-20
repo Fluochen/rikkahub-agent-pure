@@ -54,11 +54,12 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -77,6 +78,7 @@ import me.rerere.rikkahub.ui.theme.LocalDarkMode
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import me.rerere.ai.provider.BuiltInTools
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderSetting
@@ -1050,6 +1052,15 @@ private fun GlassTopBarButton(
  * finger is clearly travelling left (the direction that reveals the right-side drawer), so
  * vertical scrolling and horizontally-scrollable content inside the chat stay unaffected.
  *
+ * Runs on the *initial* pass, not the default main pass. Inside this box sits the conversation
+ * drawer, a Material3 `ModalNavigationDrawer` whose `anchoredDraggable` consumes every horizontal
+ * drag it sees in the main pass (it does not care that the drawer is already closed and cannot
+ * move any further). A main-pass detector here is dispatched child-first, so it only ever received
+ * already-consumed changes — `awaitHorizontalTouchSlopOrCancellation` returns null for those and
+ * the drawer never opened. Watching the initial pass (parent-first) lets this detector decide
+ * before the inner drawer does; consuming at that point also cancels the inner drag, so the two
+ * drawers can never both react to the same finger.
+ *
  * Direction is read from the finger's displacement since touch-down: the `over` slop-crossed
  * amount is unsigned, so checking its sign never fires.
  */
@@ -1059,13 +1070,32 @@ private fun Modifier.workbenchRightEdgeSwipe(
 ): Modifier = this.pointerInput(enabled) {
     if (!enabled) return@pointerInput
     awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = false)
+        val down = awaitFirstDown(
+            requireUnconsumed = false,
+            pass = PointerEventPass.Initial,
+        )
         if (down.position.x < size.width * 0.6f) return@awaitEachGesture
-        val drag = awaitHorizontalTouchSlopOrCancellation(down.id) { change, _ ->
-            if (change.position.x - down.position.x < 0f) change.consume()
-        }
-        if (drag != null && drag.isConsumed) {
-            onOpen()
+
+        val touchSlop = viewConfiguration.touchSlop
+        var totalX = 0f
+        var totalY = 0f
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+            totalX += change.positionChange().x
+            totalY += change.positionChange().y
+            if (!change.pressed) break
+
+            if (abs(totalX) > touchSlop && abs(totalX) > abs(totalY)) {
+                // Clearly horizontal. Leftward only: that is the direction that pulls the
+                // right-side workbench in; anything else stays with the content.
+                if (totalX < 0f) {
+                    event.changes.forEach { it.consume() }
+                    onOpen()
+                }
+                break
+            }
+            if (abs(totalY) > touchSlop && abs(totalY) >= abs(totalX)) break
         }
     }
 }
