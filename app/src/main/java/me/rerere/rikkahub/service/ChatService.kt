@@ -1367,6 +1367,9 @@ class ChatService(
 
         val releaseForegroundWork = foregroundWorkTracker.acquire()
         val job = appScope.launch {
+            // 批 E — set only when this call actually moved the pending tool to a decision,
+            // so a stale double-tap cannot flip a mission out of WAITING_APPROVAL.
+            var approvalApplied = false
             try {
                 awaitForegroundWorkReady()
                 convMutex.withLock {
@@ -1405,7 +1408,13 @@ class ChatService(
                         }
                         val updatedConversation = conversation.copy(messageNodes = updatedNodes)
                         saveConversation(conversationId, updatedConversation)
+                        approvalApplied = true
                     }
+                }
+                // 批 E — the approval is decided: if the mission round was parked as
+                // WAITING_APPROVAL, put it back to RUNNING before generation resumes.
+                if (approvalApplied) {
+                    runCatching { missionEngine.onApprovalResolved(conversationId.toString()) }
                 }
                 // Outside the mutex: kick off the resume generation if no tools remain pending.
                 // (handleMessageComplete is a long-running flow collect; holding the mutex
@@ -2003,6 +2012,11 @@ class ChatService(
                 },
                 onToolExecuted = { toolName, argsJson, outputJson ->
                     missionEngine.onToolExecuted(conversation.id.toString(), toolName, argsJson, outputJson)
+                },
+                // 批 E — a mission round that stops on a tool approval shows WAITING_APPROVAL
+                // instead of RUNNING; onApprovalResolved (handleToolApproval) restores RUNNING.
+                onAwaitingApproval = { toolName ->
+                    missionEngine.onAwaitingApproval(conversation.id.toString(), toolName)
                 },
                 messages = messagesForGeneration,
                 assistant = assistant.toLoopAssistant(),

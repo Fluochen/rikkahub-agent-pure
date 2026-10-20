@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.service.mission
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import me.rerere.rikkahub.data.agentrun.AgentRunKind
 import me.rerere.rikkahub.data.ai.tools.ConversationSystemAddendum
 import me.rerere.rikkahub.data.mission.MissionEntity
@@ -79,6 +81,16 @@ class MissionLauncher(
      * 测试与旧构造点不传时行为与批 B 完全一致。
      */
     private val workflowSource: MissionWorkflowSource? = null,
+    /**
+     * 批 E — 应用级 scope，用来在后台驱动本轮 run 的终结。
+     *
+     * `RunService.submit` 只是把生成任务点起来；台账结算、headless 标记释放和
+     * `RUN_FINISHED` 事件都发生在 `awaitTerminal` 里，而 `RUN_FINISHED` 是 MissionSupervisor
+     * 唯一的主事件源。批 A 起一直没人调用它，导致任务轮次跑完也不会触发「完成 / 续跑 / 熔断」
+     * 判定（只有重启时的 onBoot 扫描能兜到）。这里给无头轮次补上后台 await；null（测试和旧构造点）
+     * 保持原行为。
+     */
+    private val appScope: CoroutineScope? = null,
 ) {
 
     /** Launch (or continue) mission [missionId]; see the class KDoc for the full dance. */
@@ -204,6 +216,15 @@ class MissionLauncher(
                     conversationId = handle.conversationId.toString(),
                     runId = handle.id,
                 )
+            }
+
+            // 批 E — 无头轮次只有在有人 awaitTerminal 时才会结算台账、释放 headless 标记并写
+            // RUN_FINISHED（督导的唯一主事件源）。交互式（SEMI/MANUAL）轮次可能停在工具审批上：
+            // 生成任务会在审批处结束，但工作尚未结束，因此不在后台 watch，交给用户操作。
+            if (headless) {
+                appScope?.launch {
+                    runCatching { runService.awaitTerminal(handle) }
+                }
             }
 
             LaunchOutcome(ok = true, runId = handle.id)

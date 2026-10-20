@@ -361,6 +361,8 @@ val dataSourceModule = module {
                 override suspend fun read(workspaceId: String, path: String): String? =
                     runCatching { workspaceRepository.readText(workspaceId, path) }.getOrNull()
             },
+            // 批 E — 驱动无头轮次的终结（RUN_FINISHED 是督导的主事件源）。
+            appScope = get<AppScope>(),
         )
     }
     // 批 A — mission supervisor (兜底督导): subscribes to run-finished journal events and

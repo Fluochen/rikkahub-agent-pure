@@ -1,8 +1,14 @@
 package me.rerere.rikkahub.service.mission
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import me.rerere.rikkahub.data.agentrun.AgentRunKind
 import me.rerere.rikkahub.data.ai.tools.ConversationSystemAddendum
 import me.rerere.rikkahub.data.mission.FakeMissionDao
@@ -18,6 +24,7 @@ import me.rerere.rikkahub.service.run.RunHandle
 import me.rerere.rikkahub.service.run.RunRequest
 import me.rerere.rikkahub.service.run.RunResult
 import me.rerere.rikkahub.service.run.RunService
+import me.rerere.rikkahub.service.run.RunStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -51,6 +58,9 @@ class MissionLauncherTest {
         val submitted = mutableListOf<RunRequest>()
         val handles = mutableListOf<RunHandle>()
 
+        /** 批 E — how many times the launcher's background watcher awaited this run. */
+        var awaitCalls = 0
+
         /**
          * What the mission↔conversation registry held for the requested conversation at the
          * instant generation was dispatched. Proves the launcher registers BEFORE submit: a
@@ -77,8 +87,10 @@ class MissionLauncherTest {
             return handle
         }
 
-        override suspend fun awaitTerminal(handle: RunHandle): RunResult =
-            error("awaitTerminal is not exercised by MissionLauncherTest")
+        override suspend fun awaitTerminal(handle: RunHandle): RunResult {
+            awaitCalls++
+            return RunResult(RunStatus.COMPLETED, handle.conversationId)
+        }
 
         override suspend fun cancel(handle: RunHandle) = Unit
 
@@ -90,6 +102,7 @@ class MissionLauncherTest {
     private class Fixture(
         freshHandleConversation: Boolean = false,
         workflowSource: MissionWorkflowSource? = null,
+        scope: CoroutineScope? = null,
     ) {
         val missionDao = FakeMissionDao()
         val runEventDao = FakeRunEventDao()
@@ -106,6 +119,7 @@ class MissionLauncherTest {
             runEventRepository = runEvents,
             assistantResolver = { assistantResult },
             workflowSource = workflowSource,
+            appScope = scope,
         )
 
         suspend fun seed(mission: MissionEntity) = missionDao.upsert(mission)
@@ -566,5 +580,51 @@ class MissionLauncherTest {
         // Unregister is a no-op for unknown conversations.
         MissionSessions.unregister("c-unknown")
         assertNull(MissionSessions.missionIdFor("c-unknown"))
+    }
+
+    // ---------------------------------------------------------------- 批 E: run watcher
+
+    @Test
+    fun `a headless launch drives the run to its terminal so the supervisor is fed`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val fx = Fixture(scope = scope)
+            fx.seed(mission(id = "m-watch", conversationId = "c-watch"))
+
+            val outcome = fx.launcher.launch("m-watch", LaunchSource.Create)
+
+            assertTrue(outcome.ok)
+            withTimeoutOrNull(2_000) {
+                while (fx.runService.awaitCalls == 0) delay(10)
+            }
+            assertEquals(
+                "a headless round must be awaited — RUN_FINISHED is the supervisor's only feed",
+                1,
+                fx.runService.awaitCalls,
+            )
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `an interactive launch is not watched in the background`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val fx = Fixture(scope = scope)
+            fx.seed(mission(id = "m-manual", conversationId = "c-manual", approvalMode = "MANUAL"))
+
+            val outcome = fx.launcher.launch("m-manual", LaunchSource.Create)
+
+            assertTrue(outcome.ok)
+            delay(200)
+            assertEquals(
+                "an interactive round may pause on an approval; the user drives it",
+                0,
+                fx.runService.awaitCalls,
+            )
+        } finally {
+            scope.cancel()
+        }
     }
 }

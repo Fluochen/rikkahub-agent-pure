@@ -450,6 +450,11 @@ class GenerationLoop(
         // Fired once per tool right after its result lands in `executedTools`. ChatService
         // routes this into the MissionEngine so workbench missions can log artifacts.
         onToolExecuted: (suspend (toolName: String, argsJson: String, outputJson: String) -> Unit)? = null,
+        // 批 E — fired once when this turn stops because at least one tool call needs the
+        // user's approval. ChatService routes it into the MissionEngine so a mission waiting
+        // on an approval shows WAITING_APPROVAL instead of pretending to still be running.
+        // Best-effort: a failing hook must never affect the turn (see the call site).
+        onAwaitingApproval: (suspend (toolName: String) -> Unit)? = null,
         // Called immediately before every model request, including the request after a tool
         // result. ChatService uses this to reassert the foreground service before a background
         // continuation opens a new socket.
@@ -723,6 +728,8 @@ class GenerationLoop(
                 // flips to Pending and a duplicate prompt is emitted even though X is
                 // now persisted-approved.
                 var hasPendingApproval = false
+                // 批 E — first tool name that put this step on hold, for the approval hook.
+                var pendingApprovalTool: String? = null
                 val updatedTools = ArrayList<UIMessagePart.Tool>(toolCalls.size)
                 for (tool in toolCalls) {
                     val toolDef = toolsInternal.find { it.name == tool.toolName }
@@ -756,12 +763,14 @@ class GenerationLoop(
                                 tool  // leave as Auto so the executor runs it without prompting
                             } else {
                                 hasPendingApproval = true
+                                pendingApprovalTool = pendingApprovalTool ?: tool.toolName
                                 tool.copy(approvalState = ToolApprovalState.Pending)
                             }
                         }
                         // State is Pending -> keep waiting
                         tool.approvalState is ToolApprovalState.Pending -> {
                             hasPendingApproval = true
+                            pendingApprovalTool = pendingApprovalTool ?: tool.toolName
                             tool
                         }
 
@@ -787,6 +796,10 @@ class GenerationLoop(
                 // If there are pending approvals, break and wait for user
                 if (hasPendingApproval) {
                     Log.i(TAG, "generateText: waiting for tool approval")
+                    val pendingTool = pendingApprovalTool
+                    if (pendingTool != null) {
+                        runCatching { onAwaitingApproval?.invoke(pendingTool) }
+                    }
                     break
                 }
 
