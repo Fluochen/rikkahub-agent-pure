@@ -63,7 +63,7 @@ object ImportedDatabaseReconciler {
      */
     internal const val EXPECTED_VERSION = 36
     // NOTE: refreshed from the CI-exported schemas/.../36.json identityHash before release.
-    internal const val EXPECTED_IDENTITY_HASH = "9540ddedc97486b95bca16a8aa96d94a"
+    internal const val EXPECTED_IDENTITY_HASH = "ce18ed529006e1cd3feb96db155597e2"
 
     /**
      * Columns that a restored file must already have for its shared schema to be considered
