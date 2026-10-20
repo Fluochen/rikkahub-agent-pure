@@ -573,6 +573,12 @@ class RouteActivity : ComponentActivity() {
                                 me.rerere.rikkahub.ui.pages.workbench.MissionDetailPage(missionId = key.id)
                             }
 
+                            entry<Screen.Workbench> { key ->
+                                me.rerere.rikkahub.ui.pages.workbench.WorkbenchPage(
+                                    currentConversationId = key.conversationId,
+                                )
+                            }
+
                             entry<Screen.SettingScheduledJobs> {
                                 me.rerere.rikkahub.ui.pages.setting.scheduledjobs.ScheduledJobsScreen()
                             }
@@ -868,6 +874,13 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data class MissionDetail(val id: String) : Screen
+
+    /**
+     * The full-screen workbench. [conversationId] only seeds the create form's default
+     * conversation; the page itself is a normal destination and opens from the chat top bar.
+     */
+    @Serializable
+    data class Workbench(val conversationId: String? = null) : Screen
 
     @Serializable
     data object SettingScheduledJobs : Screen

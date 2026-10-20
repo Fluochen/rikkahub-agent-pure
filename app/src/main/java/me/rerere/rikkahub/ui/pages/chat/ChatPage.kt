@@ -54,11 +54,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -102,7 +97,6 @@ import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.ui.components.ai.ChatAttachmentPickerActions
 import me.rerere.rikkahub.Screen
-import me.rerere.rikkahub.ui.pages.workbench.WorkbenchDrawerContent
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
 import me.rerere.rikkahub.ui.components.ai.SearchMode
@@ -155,10 +149,6 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
         .ifBlank { null }
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
-    // Workbench: a second modal drawer mirrored to the right edge (via RTL) hosting the
-    // mission workbench. Gestures stay disabled while closed — the custom right-edge swipe
-    // below is the only opener, so it never fights the conversation drawer or message list.
-    val workbenchDrawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     // Shared Haze state between the chat page and the drawer: the page marks its background +
     // message list as the blur source (hazeSource), so the drawer's glass panel refracts the
     // page sitting behind it instead of showing an opaque block.
@@ -246,128 +236,97 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
         }
     }
 
-    BackHandler(enabled = workbenchDrawerState.isOpen) {
-        scope.launch { workbenchDrawerState.close() }
-    }
-
-    // Outer drawer hosting the workbench, mirrored to the right edge via RTL layout direction;
-    // the inner conversation drawer keeps its native left-edge behavior untouched.
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-        ModalNavigationDrawer(
-            drawerState = workbenchDrawerState,
-            gesturesEnabled = workbenchDrawerState.isOpen,
-            drawerContent = {
-                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                    WorkbenchDrawerContent(
-                        onNavigateDetail = { missionId ->
-                            scope.launch { workbenchDrawerState.close() }
-                            navController.navigate(Screen.MissionDetail(missionId))
-                        },
-                        currentConversationId = conversation.id.toString(),
+    when {
+        isBigScreen -> {
+            PermanentNavigationDrawer(
+                drawerContent = {
+                    ChatDrawerContent(
+                        navController = navController,
+                        current = conversation,
+                        vm = vm,
+                        settings = setting,
+                        hazeState = hazeState,
+                        drawerWidth = conversationDrawerWidth,
                     )
                 }
-            },
-        ) {
-            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .workbenchRightEdgeSwipe(
-                            enabled = !workbenchDrawerState.isOpen,
-                            onOpen = { scope.launch { workbenchDrawerState.open() } },
-                        ),
-                ) {
-                    when {
-                        isBigScreen -> {
-                            PermanentNavigationDrawer(
-                                drawerContent = {
-                                    ChatDrawerContent(
-                                        navController = navController,
-                                        current = conversation,
-                                        vm = vm,
-                                        settings = setting,
-                                        hazeState = hazeState,
-                                        drawerWidth = conversationDrawerWidth,
-                                    )
-                                }
-                            ) {
-                                ChatPageContent(
-                                    onStartVoiceMode = startVoiceMode,
-                                    inputState = inputState,
-                                    loadingJob = loadingJob,
-                                    processingStatus = mergedStatus,
-                                    setting = setting,
-                                    conversation = conversation,
-                                    drawerState = drawerState,
-                                    navController = navController,
-                                    vm = vm,
-                                    chatListState = chatListState,
-                                    hazeState = hazeState,
-                                    enableWebSearch = enableWebSearch,
-                                    currentChatModel = currentChatModel,
-                                    bigScreen = true,
-                                    errors = errors,
-                                    onDismissError = { vm.dismissError(it) },
-                                    onClearAllErrors = { vm.clearAllErrors() },
-                                    onOpenWorkbench = { scope.launch { workbenchDrawerState.open() } },
-                                )
-                            }
-                        }
+            ) {
+                ChatPageContent(
+                    onStartVoiceMode = startVoiceMode,
+                    inputState = inputState,
+                    loadingJob = loadingJob,
+                    processingStatus = mergedStatus,
+                    setting = setting,
+                    conversation = conversation,
+                    drawerState = drawerState,
+                    navController = navController,
+                    vm = vm,
+                    chatListState = chatListState,
+                    hazeState = hazeState,
+                    enableWebSearch = enableWebSearch,
+                    currentChatModel = currentChatModel,
+                    bigScreen = true,
+                    errors = errors,
+                    onDismissError = { vm.dismissError(it) },
+                    onClearAllErrors = { vm.clearAllErrors() },
+                    onOpenWorkbench = {
+                        navController.navigate(Screen.Workbench(conversation.id.toString()))
+                    },
+                )
+            }
+        }
 
-                        else -> {
-                            ModalNavigationDrawer(
-                                drawerState = drawerState,
-                                // No scrim: in this stack the chat page is the raised card, so
-                                // dimming it would flatten the two layers back into one. The
-                                // drawer dims itself instead, and the open drawer still closes on
-                                // a scrim tap — M3 composes the scrim either way, it is only its
-                                // colour that goes away.
-                                scrimColor = Color.Transparent,
-                                drawerContent = {
-                                    ChatDrawerContent(
-                                        navController = navController,
-                                        current = conversation,
-                                        vm = vm,
-                                        settings = setting,
-                                        hazeState = hazeState,
-                                        drawerWidth = conversationDrawerWidth,
-                                    )
-                                },
-                            ) {
-                                // Push transition: the sheet comes in, the chat itself is pushed
-                                // aside and rounds its leading corners into a stacked card.
-                                PushDrawerContent(
-                                    drawerState = drawerState,
-                                    drawerWidth = conversationDrawerWidth,
-                                ) {
-                                    ChatPageContent(
-                                        onStartVoiceMode = startVoiceMode,
-                                        inputState = inputState,
-                                        loadingJob = loadingJob,
-                                        processingStatus = mergedStatus,
-                                        setting = setting,
-                                        conversation = conversation,
-                                        drawerState = drawerState,
-                                        navController = navController,
-                                        vm = vm,
-                                        chatListState = chatListState,
-                                        hazeState = hazeState,
-                                        enableWebSearch = enableWebSearch,
-                                        currentChatModel = currentChatModel,
-                                        bigScreen = false,
-                                        errors = errors,
-                                        onDismissError = { vm.dismissError(it) },
-                                        onClearAllErrors = { vm.clearAllErrors() },
-                                        onOpenWorkbench = { scope.launch { workbenchDrawerState.open() } },
-                                    )
-                                }
-                            }
-                            BackHandler(drawerState.isOpen) {
-                                scope.launch { drawerState.close() }
-                            }
-                        }
-                    }
+        else -> {
+            ModalNavigationDrawer(
+                drawerState = drawerState,
+                // No scrim: in this stack the chat page is the raised card, so
+                // dimming it would flatten the two layers back into one. The
+                // drawer dims itself instead, and the open drawer still closes on
+                // a scrim tap — M3 composes the scrim either way, it is only its
+                // colour that goes away.
+                scrimColor = Color.Transparent,
+                drawerContent = {
+                    ChatDrawerContent(
+                        navController = navController,
+                        current = conversation,
+                        vm = vm,
+                        settings = setting,
+                        hazeState = hazeState,
+                        drawerWidth = conversationDrawerWidth,
+                    )
+                },
+            ) {
+                // Push transition: the sheet comes in, the chat itself is pushed
+                // aside and rounds its leading corners into a stacked card.
+                PushDrawerContent(
+                    drawerState = drawerState,
+                    drawerWidth = conversationDrawerWidth,
+                ) {
+                    ChatPageContent(
+                        onStartVoiceMode = startVoiceMode,
+                        inputState = inputState,
+                        loadingJob = loadingJob,
+                        processingStatus = mergedStatus,
+                        setting = setting,
+                        conversation = conversation,
+                        drawerState = drawerState,
+                        navController = navController,
+                        vm = vm,
+                        chatListState = chatListState,
+                        hazeState = hazeState,
+                        enableWebSearch = enableWebSearch,
+                        currentChatModel = currentChatModel,
+                        bigScreen = false,
+                        errors = errors,
+                        onDismissError = { vm.dismissError(it) },
+                        onClearAllErrors = { vm.clearAllErrors() },
+                        onOpenWorkbench = {
+                            navController.navigate(Screen.Workbench(conversation.id.toString()))
+                        },
+                    )
                 }
+            }
+            BackHandler(drawerState.isOpen) {
+                scope.launch { drawerState.close() }
             }
         }
     }
@@ -1040,32 +999,6 @@ private fun GlassTopBarButton(
             contentAlignment = Alignment.Center,
         ) {
             content()
-        }
-    }
-}
-
-/**
- * Workbench right-edge swipe opener. The conversation drawer's own edge gesture owns the left
- * edge; this watches drags that START in the right 40% of the screen and only consumes once the
- * finger is clearly travelling left (the direction that reveals the right-side drawer), so
- * vertical scrolling and horizontally-scrollable content inside the chat stay unaffected.
- *
- * Direction is read from the finger's displacement since touch-down: the `over` slop-crossed
- * amount is unsigned, so checking its sign never fires.
- */
-private fun Modifier.workbenchRightEdgeSwipe(
-    enabled: Boolean,
-    onOpen: () -> Unit,
-): Modifier = this.pointerInput(enabled) {
-    if (!enabled) return@pointerInput
-    awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = false)
-        if (down.position.x < size.width * 0.6f) return@awaitEachGesture
-        val drag = awaitHorizontalTouchSlopOrCancellation(down.id) { change, _ ->
-            if (change.position.x - down.position.x < 0f) change.consume()
-        }
-        if (drag != null && drag.isConsumed) {
-            onOpen()
         }
     }
 }
