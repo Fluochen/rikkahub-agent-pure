@@ -56,8 +56,8 @@ internal class MissionTriggerEngine(
     private val boot = BootTriggerFamily(
         scope,
         resolver = {
-            val cb = fireCallback ?: return@BootTriggerFamily null
-            cb to listBindings()
+            val cb = fireCallback
+            if (cb == null) null else cb to listBindings()
         },
     )
     private val manual = ManualTriggerFamily()
