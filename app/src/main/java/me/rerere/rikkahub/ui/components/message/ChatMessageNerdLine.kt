@@ -40,7 +40,7 @@ fun ChatMessageNerdLine(
     val settings = LocalSettings.current.displaySetting
     // A user message has no turn footer; when the ledger has nothing to say and the turn is not
     // running there is simply nothing to draw.
-    if (!settings.showTokenUsage || turnFooter == null) return
+    if (!settings.showTokenUsage || settings.minimalMode || turnFooter == null) return
 
     val darkTheme = LocalDarkMode.current
     val needPlate = photoShown  // any photo (light or dark) benefits from a plate

@@ -129,6 +129,18 @@ fun SettingPreferencesUIPage(vm: SettingVM = koinViewModel()) {
                     title = { Text(stringResource(R.string.setting_page_message_display_settings)) },
                 ) {
                     item(
+                        headlineContent = { Text(stringResource(R.string.setting_display_page_minimal_mode_title)) },
+                        supportingContent = { Text(stringResource(R.string.setting_display_page_minimal_mode_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = displaySetting.minimalMode,
+                                onCheckedChange = {
+                                    updateDisplaySetting(displaySetting.copy(minimalMode = it))
+                                }
+                            )
+                        },
+                    )
+                    item(
                         headlineContent = { Text(stringResource(R.string.setting_display_page_show_user_avatar_title)) },
                         supportingContent = { Text(stringResource(R.string.setting_display_page_show_user_avatar_desc)) },
                         trailingContent = {

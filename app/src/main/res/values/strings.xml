@@ -894,6 +894,8 @@
   <string name="setting_display_page_font_size_title">Chat Font Size</string>
   <string name="setting_display_page_live_update_notification">Live Update Notification</string>
   <string name="setting_display_page_live_update_notification_desc">Show real-time notification updates during message generation (Android 15+)</string>
+  <string name="setting_display_page_minimal_mode_desc">A quiet, text-first chat: hides names, avatars, token stats and extra buttons. Tap a reply or long-press your message to show its actions.</string>
+  <string name="setting_display_page_minimal_mode_title">Minimal mode</string>
   <string name="setting_display_page_message_jumper_position_desc">Move  Message Jumper to left side</string>
   <string name="setting_display_page_message_jumper_position_title">Message Jumper Position</string>
   <string name="setting_display_page_notification_message_generated">Enable notification after message generated</string>

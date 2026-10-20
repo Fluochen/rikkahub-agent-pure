@@ -45,6 +45,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalFloatingToolbar
 import androidx.compose.material3.Icon
@@ -274,6 +275,7 @@ private fun ChatListNormal(
         conversation.messageNodes.distinctBy { it.id }.groupAutomaticCompactionMessages()
     }
     val lastMessageNodeId = conversation.messageNodes.lastOrNull()?.id
+    val minimal = settings.displaySetting.minimalMode
 
     Box(
         modifier = Modifier
@@ -331,12 +333,13 @@ private fun ChatListNormal(
                     state = state,
                     // The top inset is content padding rather than a modifier padding, so the messages
                     // can scroll UNDER the title bar (where they fade out) instead of being clipped by it.
-                    contentPadding = PaddingValues(16.dp) + PaddingValues(
+                    contentPadding = PaddingValues(if (minimal) 20.dp else 16.dp) + PaddingValues(
                         top = innerPadding.calculateTopPadding(),
                         bottom = 32.dp + innerPadding.calculateBottomPadding(),
                     ),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    // Minimal mode trades density for air: more margin, more space between turns.
+                    verticalArrangement = Arrangement.spacedBy(if (minimal) 20.dp else 12.dp),
                     modifier = Modifier
                         .fillMaxSize()
                         .bounceOverscroll(state, enabled = bounceEnabled)
@@ -424,9 +427,16 @@ private fun ChatListNormal(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        RabbitLoadingIndicator(
-                            modifier = Modifier.size(28.dp)
-                        )
+                        if (minimal) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            RabbitLoadingIndicator(
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
                         AnimatedVisibility(
                             visible = processingStatus != null,
                         ) {
@@ -550,7 +560,7 @@ private fun ChatListNormal(
 
             // 消息快速跳转
             MessageJumper(
-                show = isRecentScroll && !state.isScrollInProgress && settings.displaySetting.showMessageJumper && !captureProgress,
+                show = isRecentScroll && !state.isScrollInProgress && settings.displaySetting.showMessageJumper && !minimal && !captureProgress,
                 onLeft = settings.displaySetting.messageJumperOnLeft,
                 scope = scope,
                 state = state

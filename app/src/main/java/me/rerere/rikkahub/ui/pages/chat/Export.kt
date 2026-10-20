@@ -401,7 +401,12 @@ private suspend fun exportToImage(
         width = 540.dp,
         screenDensity = density,
         content = {
-            CompositionLocalProvider(LocalSettings provides settings) {
+            // Exports always render the full layout (names, avatars), never the minimal one.
+            CompositionLocalProvider(
+                LocalSettings provides settings.copy(
+                    displaySetting = settings.displaySetting.copy(minimalMode = false),
+                ),
+            ) {
                 ExportedChatImage(
                     conversation = conversation,
                     messages = messages,

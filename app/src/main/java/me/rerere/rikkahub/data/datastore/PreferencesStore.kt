@@ -1350,6 +1350,10 @@ data class DisplaySetting(
     val enableVolumeKeyScroll: Boolean = false,
     val volumeKeyScrollRatio: Float = 1.0f,
     val enableBounceOverscroll: Boolean = true,
+    // Minimal mode: a quiet, text-first chat. Hides the avatar/name header, token stats, assistant
+    // bubble and per-message action rows (revealed on tap / long-press), and loosens spacing.
+    // Purely presentational and off by default; the stored fields above stay untouched.
+    val minimalMode: Boolean = false,
 )
 
 @Serializable

@@ -665,6 +665,8 @@
   <string name="setting_display_page_font_size_title">聊天字體大小</string>
   <string name="setting_display_page_live_update_notification">即時更新通知</string>
   <string name="setting_display_page_live_update_notification_desc">在訊息產生期間顯示即時通知更新（Android 15+）</string>
+  <string name="setting_display_page_minimal_mode_desc">只留文字的安靜聊天介面：隱藏名稱、頭像、token 統計和多餘按鈕。點按回覆或長按自己的訊息可顯示操作。</string>
+  <string name="setting_display_page_minimal_mode_title">精簡模式</string>
   <string name="setting_display_page_message_jumper_position_desc">將訊息跳轉按鈕移至左側</string>
   <string name="setting_display_page_message_jumper_position_title">訊息跳轉位置</string>
   <string name="setting_display_page_notification_message_generated">在訊息產生後啟用通知</string>

@@ -953,7 +953,7 @@ private fun TopBar(
                         style = MaterialTheme.typography.bodyMedium,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (model != null) {
+                    if (model != null && !settings.displaySetting.minimalMode) {
                         // Aggregate conversation token consumption across all turns and tool calls.
                         // UsageLedger (turnFooters) is the ground truth (includes all tool loop steps);
                         // fallback to TokenBudgetTracker for legacy or imported conversations without ledger rows.

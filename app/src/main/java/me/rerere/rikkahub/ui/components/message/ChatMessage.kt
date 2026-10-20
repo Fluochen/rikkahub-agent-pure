@@ -8,6 +8,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -164,15 +167,30 @@ fun ChatMessage(
     )
     var showActionsSheet by remember { mutableStateOf(false) }
     var showSelectCopySheet by remember { mutableStateOf(false) }
+    // Minimal mode keeps the action row off every message but the last; tapping a reply (or
+    // long-pressing your own message, whose tap already edits) brings it back for that message.
+    val minimal = settings.minimalMode
+    var actionsRevealed by remember { mutableStateOf(false) }
     val navController = LocalNavController.current
     val context = LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
     Column(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (minimal && message.role != MessageRole.USER) {
+                    Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { actionsRevealed = !actionsRevealed }
+                } else {
+                    Modifier
+                }
+            ),
         horizontalAlignment = if (message.role == MessageRole.USER) Alignment.End else Alignment.Start,
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        if (!message.parts.isEmptyUIMessage()) {
+        if (!minimal && !message.parts.isEmptyUIMessage()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth(),
@@ -207,6 +225,11 @@ fun ChatMessage(
                 onToolAnswer = onToolAnswer,
                 onRerunTool = onRerunTool,
                 onUserMessageClick = if (message.role == MessageRole.USER) onEdit else null,
+                onUserMessageLongClick = if (minimal && message.role == MessageRole.USER) {
+                    { actionsRevealed = !actionsRevealed }
+                } else {
+                    null
+                },
             )
 
             message.translation?.let { translation ->
@@ -217,10 +240,10 @@ fun ChatMessage(
             }
         }
 
-        val showActions = if (lastMessage) {
-            !loading
-        } else {
-            message.parts.isEmptyUIMessage().not()
+        val showActions = when {
+            lastMessage -> !loading
+            minimal -> actionsRevealed && message.parts.isEmptyUIMessage().not()
+            else -> message.parts.isEmptyUIMessage().not()
         }
 
         AnimatedVisibility(
@@ -322,6 +345,7 @@ private fun MessagePartsBlock(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onRerunTool: (suspend (toolCallId: String) -> me.rerere.rikkahub.service.ChatService.RerunToolResult)? = null,
     onUserMessageClick: (() -> Unit)? = null,
+    onUserMessageLongClick: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
@@ -329,6 +353,9 @@ private fun MessagePartsBlock(
     // 消息输出HapticFeedback
     val hapticFeedback = LocalHapticFeedback.current
     val settings = LocalSettings.current
+    // Minimal mode never draws the assistant bubble, whatever the bubble switch says.
+    val minimal = settings.displaySetting.minimalMode
+    val showAssistantBubble = settings.displaySetting.showAssistantBubble && !minimal
     val partsState by rememberUpdatedState(parts)
 
     val handleClickCitation: (String) -> Unit = remember {
@@ -455,10 +482,17 @@ private fun MessagePartsBlock(
                                         scope = AssistantAffectScope.USER,
                                         visual = true,
                                     ),
-                                    bubbleColor = MaterialTheme.colorScheme.primaryContainer.copy(
-                                        alpha = settings.displaySetting.bubbleOpacity,
-                                    ),
+                                    // Minimal mode drops the accent colour: your message is a
+                                    // neutral tonal block, so the text is the only thing with colour.
+                                    bubbleColor = (
+                                        if (minimal) {
+                                            MaterialTheme.colorScheme.surfaceContainerHigh
+                                        } else {
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        }
+                                    ).copy(alpha = settings.displaySetting.bubbleOpacity),
                                     onClick = { onUserMessageClick?.invoke() },
+                                    onLongClick = onUserMessageLongClick,
                                     onClickCitation = handleClickCitation,
                                 )
                             } else {
@@ -476,13 +510,13 @@ private fun MessagePartsBlock(
                                         ),
                                         assistant?.useGradientBackground == true,
                                     ),
-                                    showAssistantBubble = settings.displaySetting.showAssistantBubble,
+                                    showAssistantBubble = showAssistantBubble,
                                 )
-                                if (settings.displaySetting.showAssistantBubble || onPhoto) {
+                                if (showAssistantBubble || onPhoto) {
                                     Surface(
                                         modifier = Modifier.animateContentSize(),
                                         shape = RoundedCornerShape(16.dp),
-                                        color = if (settings.displaySetting.showAssistantBubble) {
+                                        color = if (showAssistantBubble) {
                                             MaterialTheme.colorScheme.surfaceContainerHigh.copy(
                                                 alpha = settings.displaySetting.bubbleOpacity,
                                             )
@@ -743,6 +777,7 @@ private fun UserMessageBubble(
     bubbleColor: Color,
     onClick: () -> Unit,
     onClickCitation: (String) -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     var showToggle by remember(text) { mutableStateOf(UserMessageCollapse.likelyOverflows(text)) }
@@ -754,7 +789,20 @@ private fun UserMessageBubble(
         color = bubbleColor,
         onClick = onClick,
     ) {
-        Column(modifier = Modifier.padding(8.dp)) {
+        Column(
+            modifier = Modifier
+                // The Surface's own onClick has no long-press, so when a long-press is wanted
+                // the Column takes over both gestures. Declared before the padding so the whole
+                // bubble, padding included, stays tappable.
+                .then(
+                    if (onLongClick != null) {
+                        Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                    } else {
+                        Modifier
+                    }
+                )
+                .padding(8.dp)
+        ) {
             Box(
                 modifier = Modifier
                     .clipToBounds()
