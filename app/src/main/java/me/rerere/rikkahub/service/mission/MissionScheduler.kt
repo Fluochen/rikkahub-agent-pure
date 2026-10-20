@@ -58,14 +58,15 @@ class MissionScheduler(
     private val zoneId: () -> ZoneId = { ZoneId.systemDefault() },
 ) {
 
+    private val fireCallback = TriggerFireCallback { missionId, spec -> onFire(missionId, spec) }
+
     private val engine = MissionTriggerEngine(
         context = context,
         scope = appScope,
         resolver = { id -> loadBinding(id) },
         listBindings = { loadBindings() },
+        callback = fireCallback,
     )
-
-    private val fireCallback = TriggerFireCallback { missionId, spec -> onFire(missionId, spec) }
 
     @Volatile private var started = false
     private var observeJob: Job? = null
@@ -90,7 +91,7 @@ class MissionScheduler(
                 }
                 .distinctUntilChanged()
                 .debounce(RESYNC_DEBOUNCE_MS)
-                .onEach { bindings -> runCatching { engine.sync(bindings, fireCallback) } }
+                .onEach { bindings -> runCatching { engine.sync(bindings) } }
                 .catch { Log.w(TAG, "mission scheduler observation failed", it) }
                 .collect { /* drained via onEach */ }
         }

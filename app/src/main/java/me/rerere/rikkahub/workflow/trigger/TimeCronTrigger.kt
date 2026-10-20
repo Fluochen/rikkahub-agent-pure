@@ -49,6 +49,11 @@ internal class TimeCronTriggerFamily(
      * legacy registry). Null return = unknown / not armed.
      */
     private val resolver: (suspend (String) -> TriggerBinding?)? = null,
+    /**
+     * 批 B — callback available even before the first [sync]. A WorkManager cold start can
+     * run the worker before the mission flow emits; without this the fire would be dropped.
+     */
+    private val fallbackCallback: TriggerFireCallback? = null,
 ) : WorkflowTriggerFamily {
 
     override val name = "time_cron"
@@ -131,7 +136,7 @@ internal class TimeCronTriggerFamily(
 
     /** Internal — fires the owner then re-enqueues if needed. Called from worker. */
     suspend fun onWorkerFired(workflowId: String) {
-        val cb = fireCallback ?: return
+        val cb = fireCallback ?: fallbackCallback ?: return
         // Post-boot or post-process-death race: WorkManager wakes the worker before
         // registry.start() has emitted from the repo's flow, leaving `lastSnapshot`
         // empty. Fall back to a direct resolver lookup so the fire isn't silently

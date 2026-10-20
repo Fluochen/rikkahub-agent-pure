@@ -39,9 +39,11 @@ internal class MissionTriggerEngine(
     private val resolver: suspend (String) -> TriggerBinding?,
     /** all armed bindings, for the boot cold-start path. */
     private val listBindings: suspend () -> List<TriggerBinding>,
+    /** The scheduler's fire callback; available even before the mission flow emits. */
+    private val callback: TriggerFireCallback,
 ) {
 
-    @Volatile private var fireCallback: TriggerFireCallback? = null
+    @Volatile private var fireCallback: TriggerFireCallback? = callback
 
     private val wifi = WifiTriggerFamily(context, scope)
     private val bluetooth = BluetoothTriggerFamily(context, scope)
@@ -49,7 +51,7 @@ internal class MissionTriggerEngine(
     private val power = PowerTriggerFamily(context, scope)
     private val screen = ScreenTriggerFamily(context, scope)
     private val battery = BatteryTriggerFamily(context, scope)
-    private val timeCron = TimeCronTriggerFamily(context, scope, resolver)
+    private val timeCron = TimeCronTriggerFamily(context, scope, resolver, callback)
     private val geofence = GeofenceTriggerFamily(context, scope)
     private val appForeground = AppForegroundTriggerFamily(scope)
     private val notification = NotificationTriggerFamily(scope)
@@ -80,7 +82,7 @@ internal class MissionTriggerEngine(
     }
 
     /** Reconcile every family with the current armed set. */
-    suspend fun sync(bindings: List<TriggerBinding>, callback: TriggerFireCallback) {
+    suspend fun sync(bindings: List<TriggerBinding>) {
         fireCallback = callback
         for (family in families) {
             val matching = bindings.filter { family.handles(it.trigger) }
