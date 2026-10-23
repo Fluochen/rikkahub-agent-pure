@@ -108,7 +108,7 @@ import me.rerere.rikkahub.data.ai.tools.CompactionToolResult
 import me.rerere.rikkahub.data.ai.tools.buildCompactionTools
 import me.rerere.rikkahub.data.ai.tools.createWorkspaceTools
 import me.rerere.rikkahub.data.ai.tools.buildColdMemoryTools
-import me.rerere.rikkahub.data.ai.tools.buildToolOutputReadTool
+import me.rerere.rikkahub.runtime.tools.buildToolOutputReadTool
 import me.rerere.rikkahub.runtime.tools.ToolOutputRules
 import me.rerere.rikkahub.data.ai.tools.buildLibrarySearchTool
 import me.rerere.rikkahub.data.ai.tools.createConversationTools
