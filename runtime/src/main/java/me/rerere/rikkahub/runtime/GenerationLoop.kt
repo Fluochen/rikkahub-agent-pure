@@ -1305,7 +1305,12 @@ class GenerationLoop(
             // upstream's isSynthetic marker (keeps this built-up system prompt out of
             // TemplateTransformer) and its stepped truncation (which now preserves
             // prompt caching instead of trimming one message at a time).
-            addAll(messages.limitContext(assistant.contextMessageLimit).ageOldToolImages())
+            // A compacted view is [summary] + rawTail, and the summary is the only record of
+            // everything before the tail. The positional limit must not be able to drop it.
+            addAll(
+                messages.limitContextPreservingLeadingSynthetic(assistant.contextMessageLimit)
+                    .ageOldToolImages()
+            )
             // Cross-model continuation: when the previous model's generation failed
             // mid-stream and routing switched to this model, append a synthetic user
             // instruction so the new model continues from the partial assistant text
@@ -1622,6 +1627,67 @@ class GenerationLoop(
             }
         } finally {
             processingStatus.value = null
+        }
+    }
+
+    /**
+     * T-05 / (3) — run an idempotent READ-ONLY tool with a bounded number of retries when an
+     * attempt fails transiently.
+     *
+     * Only reached when the assistant opted in via
+     * [me.rerere.rikkahub.data.model.Assistant.enableToolExecutionRetry] AND
+     * [ToolExecutionRetryPolicy.isIdempotentReadOnly] accepts the call — for `web_fetch` that
+     * means its arguments were inspected and the verb is GET/HEAD (T-11). With the flag off the
+     * caller's single-attempt path stays byte-identical. Two failure shapes are retried:
+     *  - a thrown transient exception (socket timeout / IO / retryable HTTP status), and
+     *  - a returned transient error envelope — most local network tools swallow the failure
+     *    into `{"error":"timeout"|"network_error"}` instead of throwing, so an exception-only
+     *    retry would never fire for the very tools this exists for.
+     * Cancellation always propagates, and the wall-clock turn budget still bounds every attempt,
+     * so retries can never carry a turn past its budget.
+     */
+    private suspend fun executeReadOnlyToolWithRetry(
+        toolDef: Tool,
+        args: kotlinx.serialization.json.JsonElement,
+        turnStartMs: Long,
+        firstAttemptRemainingMs: Long,
+    ): List<UIMessagePart> {
+        val outcome = ToolExecutionRetryPolicy.runWithRetries(
+            firstAttemptRemainingMs = firstAttemptRemainingMs,
+            remainingMsProvider = {
+                ToolRuntimeLimits.turnBudgetMs -
+                    (android.os.SystemClock.elapsedRealtime() - turnStartMs)
+            },
+            execute = { budgetMs -> withTimeoutOrNull(budgetMs) { toolDef.execute(args) } },
+            onRetry = { attemptNumber, failure ->
+                Log.w(
+                    TAG,
+                    "generateText: ${toolDef.name} transient failure, retrying " +
+                        "($attemptNumber/${ToolExecutionRetryPolicy.MAX_RETRIES})",
+                    failure,
+                )
+            },
+        )
+        return when (outcome) {
+            is ToolExecutionRetryPolicy.RetryOutcome.Completed -> outcome.output
+            is ToolExecutionRetryPolicy.RetryOutcome.Failed -> throw outcome.failure
+            is ToolExecutionRetryPolicy.RetryOutcome.TimedOut -> {
+                Log.w(TAG, "generateText: ${toolDef.name} cancelled — wall-clock budget exhausted mid-execution")
+                listOf(UIMessagePart.Text(json.encodeToString(buildJsonObject {
+                    put("error", JsonPrimitive("tool_cancelled_wall_clock"))
+                    put(
+                        "detail",
+                        JsonPrimitive("tool execution exceeded the ${ToolRuntimeLimits.turnBudgetMs / 1000}s turn budget")
+                    )
+                })))
+            }
+            is ToolExecutionRetryPolicy.RetryOutcome.BudgetExhausted -> {
+                Log.w(TAG, "generateText: ${toolDef.name} skipped — wall-clock budget already exceeded")
+                listOf(UIMessagePart.Text(json.encodeToString(buildJsonObject {
+                    put("error", JsonPrimitive("tool_cancelled_wall_clock"))
+                    put("detail", JsonPrimitive("turn budget exceeded before tool started"))
+                })))
+            }
         }
     }
 
