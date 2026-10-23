@@ -214,6 +214,7 @@ jobs:
           path: |
             app/build/reports/tests/
             ai/build/reports/tests/
+            runtime/build/reports/tests/
           if-no-files-found: ignore
           retention-days: 14
 
