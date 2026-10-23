@@ -23,7 +23,7 @@ import java.io.File
  * This step runs once, right after the restore writes `rikka_hub.db`, on the raw file before
  * Room touches it:
  *  - It creates any of the fork-only tables that are missing, empty, with the exact schema
- *    Room expects (copied verbatim from app/schemas/.../33.json), so the file looks like a
+ *    Room expects (copied from the exported schema's createSql), so the file looks like a
  *    clean agent install for those tables.
  *  - It backfills the indices and columns that Room would normally add via the auto-migrations
  *    between the restored version and [EXPECTED_VERSION] (see [BACKFILL_INDEX_DDL] and the
@@ -54,7 +54,7 @@ object ImportedDatabaseReconciler {
 
     /**
      * Room's schema version and identity hash for [AppDatabase]. Both are copied verbatim
-     * from app/schemas/me.rerere.rikkahub.data.db.AppDatabase/35.json (the identity hash also
+     * from app/schemas/me.rerere.rikkahub.data.db.AppDatabase/38.json (the identity hash also
      * appears in the generated AppDatabase_Impl RoomOpenDelegate). When the schema version is
      * bumped, update BOTH constants (and the table DDL below if the fork-only tables changed,
      * BACKFILL_INDEX_DDL if any entity gained/lost an index, and MODERN_COLUMN_SENTINELS if
@@ -62,8 +62,7 @@ object ImportedDatabaseReconciler {
      * matching. `internal` so a JVM test can assert these stay in sync with the schema export.
      */
     internal const val EXPECTED_VERSION = 38
-    // NOTE: refreshed from the CI-exported schemas/.../37.json identityHash before release.
-    internal const val EXPECTED_IDENTITY_HASH = "TODO_V38_IDENTITY_HASH"
+    internal const val EXPECTED_IDENTITY_HASH = "93bb8febe883b13618060f15f07cf7f3"
 
     /**
      * Columns that a restored file must already have for its shared schema to be considered
