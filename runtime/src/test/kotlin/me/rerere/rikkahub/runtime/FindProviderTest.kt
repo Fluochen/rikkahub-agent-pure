@@ -10,6 +10,14 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 import kotlin.uuid.Uuid
 
+/**
+ * `Model.findProvider` is the one place a model is bound to the provider that serves it, and
+ * the two cases that matter are "no override" and "override wins over the settings list".
+ *
+ * Both lookups go through `ProviderSetting.OpenAI`'s defaulted constructor, which is why this
+ * file is also the canary for :ai/:runtime ABI drift: a stale test class compiled against an
+ * older parameter list fails here with NoSuchMethodError before anything else.
+ */
 class FindProviderTest {
     @Test
     fun `findProvider returns base provider when model has no overwrite`() {
