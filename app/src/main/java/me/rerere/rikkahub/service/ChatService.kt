@@ -156,6 +156,7 @@ import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.data.model.toMessageNode
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FolderRepository
+import me.rerere.rikkahub.data.repository.MemoryInjection
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.workspace.WorkspaceShellStatus
@@ -1918,6 +1919,23 @@ class ChatService(
                 me.rerere.rikkahub.service.mission.MissionSessions.missionIdFor(conversationId.toString())
                     ?: missionEngine.missionIdFor(conversationId.toString())
             }.getOrNull()
+            // 上下文压缩 C 批 — the prompt gets only the records worth re-sending this turn,
+            // ordered by kind and budgeted by MemoryInjectionRules. Everything stays stored; the
+            // count that did not fit is passed along so the model knows the bank is bigger than
+            // what it can see. A database failure here must not fail the turn: an empty memory
+            // block is a degraded answer, not a lost conversation.
+            val memoryInjection = runCatching {
+                memoryRepository.getInjectableMemories(
+                    assistantId = if (assistant.useGlobalMemory) {
+                        MemoryRepository.GLOBAL_MEMORY_ID
+                    } else {
+                        assistant.id.toString()
+                    },
+                )
+            }.getOrElse { error ->
+                Log.w(TAG, "memory injection failed; sending no memories this turn", error)
+                MemoryInjection(emptyList(), omitted = 0)
+            }
             generationLoop.generateText(
                 settings = settings.toLoopSettings(),
                 model = model,
@@ -2025,11 +2043,8 @@ class ChatService(
                 conversationModeInjectionIds = conversation.modeInjectionIds,
                 conversationLorebookIds = conversation.lorebookIds,
                 workspaceCwd = conversation.workspaceCwd,
-                memories = (if (assistant.useGlobalMemory) {
-                    memoryRepository.getGlobalMemories()
-                } else {
-                    memoryRepository.getMemoriesOfAssistant(assistant.id.toString())
-                }).map { it.toLoopMemory() },
+                memories = memoryInjection.memories.map { it.toLoopMemory() },
+                memoriesOmitted = memoryInjection.omitted,
                 // P4 — transformers stay :app. The loop receives four closures over this
                 // turn's TransformerContext instead of the transformer objects themselves.
                 inputTransform = { msgs ->

@@ -5,7 +5,15 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.rerere.rikkahub.runtime.util.JsonInstantPretty
 
-internal fun buildMemoryPrompt(memories: List<LoopMemory>) =
+/**
+ * The `<memories>` block.
+ *
+ * [omitted] is the number of live records the injection rules left out (over budget, or
+ * expired). Saying so is the whole point: a model that believes this list is exhaustive will
+ * answer "you never told me that" instead of admitting it cannot see a record — and the user,
+ * who can see the record in the app, will conclude the assistant is ignoring them.
+ */
+internal fun buildMemoryPrompt(memories: List<LoopMemory>, omitted: Int = 0) =
     buildString {
         appendLine()
         append("**Memories**")
@@ -22,6 +30,11 @@ internal fun buildMemoryPrompt(memories: List<LoopMemory>) =
         }
         append(JsonInstantPretty.encodeToString(json))
         appendLine()
+        if (omitted > 0) {
+            append("($omitted more memories are stored but are not listed above. They are not visible ")
+            append("in this turn; if a detail is missing, say so instead of assuming it was never told.)")
+            appendLine()
+        }
     }
 
 /**

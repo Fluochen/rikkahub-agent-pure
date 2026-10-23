@@ -14,6 +14,7 @@ import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.runtime.LoopMemory
+import me.rerere.rikkahub.runtime.LoopMemoryWrite
 import me.rerere.rikkahub.runtime.util.toLocalString
 import java.time.LocalDate
 
@@ -26,7 +27,7 @@ private fun memoryPayload(memory: LoopMemory) = buildJsonObject {
 
 fun buildMemoryTools(
     json: Json,
-    onCreation: suspend (String) -> LoopMemory,
+    onCreation: suspend (String, MemoryKind) -> LoopMemoryWrite,
     onUpdate: suspend (Int, String) -> LoopMemory,
     onDelete: suspend (Int) -> Unit
 ): List<Tool> = listOf(
@@ -35,9 +36,20 @@ fun buildMemoryTools(
         description = """
             The memory tool stores long-term information across conversations.
             Use `action` to control the operation: `create` (add), `edit` (update), `delete` (remove).
-            - No relevant record: `create` + `content`
+            - No relevant record: `create` + `content` (+ `kind`)
             - Existing relevant record: `edit` + `id` + `content`
             - Outdated/irrelevant record: `delete` + `id`
+
+            `kind` tells the app how the record should be treated. Omitting it stores a `note`.
+            - preference: how the user wants to be talked to, what they like or dislike
+            - fact: a durable fact about the user, their setup or their work
+            - plan: something the user intends to do
+            - state: where things stand right now (stops being sent after ~30 days unless refreshed)
+            - note: anything else, including classified-nowhere records
+
+            A `create` can be REFUSED when the same thing is already stored. The result then has
+            `stored=false`, a `reason`, a `hint` and the `existing` record. When that happens, call
+            `edit` with the existing id instead of retrying `create` — do not delete and recreate.
             Memories will automatically appear in the <memories> tag in later conversations.
             Do not store sensitive information (e.g., ethnicity, religion, sexual orientation, political views, sex life, criminal records).
             You may store: preferred name, preferences, plans, work-related notes, chat style preferences, first chat time, etc.
@@ -73,6 +85,18 @@ fun buildMemoryTools(
                         put("type", "string")
                         put("description", "The content of the memory record (required for create/edit)")
                     })
+                    put("kind", buildJsonObject {
+                        put("type", "string")
+                        put(
+                            "enum",
+                            buildJsonArray { MemoryKind.wireNames().forEach { add(it) } }
+                        )
+                        put(
+                            "description",
+                            "Only for `create`. What sort of record this is; see the tool " +
+                                "description. Defaults to `note`."
+                        )
+                    })
                 },
                 required = listOf("action")
             )
@@ -83,7 +107,19 @@ fun buildMemoryTools(
             val payload = when (action) {
                 "create" -> {
                     val content = params["content"]?.jsonPrimitive?.contentOrNull ?: error("content is required")
-                    memoryPayload(onCreation(content))
+                    val kind = MemoryKind.fromWire(params["kind"]?.jsonPrimitive?.contentOrNull)
+                    when (val write = onCreation(content, kind)) {
+                        is LoopMemoryWrite.Stored -> memoryPayload(write.memory)
+                        // A refusal is a normal result: the model gets the existing id and can
+                        // correct itself in this same turn, which is cheaper than a tool_failed
+                        // envelope it has no way to act on.
+                        is LoopMemoryWrite.Rejected -> buildJsonObject {
+                            put("stored", false)
+                            put("reason", write.reason)
+                            put("hint", write.hint)
+                            write.existing?.let { existing -> put("existing", memoryPayload(existing)) }
+                        }
+                    }
                 }
 
                 "edit" -> {

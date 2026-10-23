@@ -61,9 +61,9 @@ object ImportedDatabaseReconciler {
      * newer *shared* conversation columns were added) or this reconciliation will silently stop
      * matching. `internal` so a JVM test can assert these stay in sync with the schema export.
      */
-    internal const val EXPECTED_VERSION = 37
+    internal const val EXPECTED_VERSION = 38
     // NOTE: refreshed from the CI-exported schemas/.../37.json identityHash before release.
-    internal const val EXPECTED_IDENTITY_HASH = "a794964cf558f9ccbfb4299316ff2434"
+    internal const val EXPECTED_IDENTITY_HASH = "TODO_V38_IDENTITY_HASH"
 
     /**
      * Columns that a restored file must already have for its shared schema to be considered
@@ -124,6 +124,25 @@ object ImportedDatabaseReconciler {
      */
     private val MISSION_V37_COLUMN_DDL: List<Pair<String, String>> = listOf(
         "workflow_path" to "ALTER TABLE `missions` ADD COLUMN `workflow_path` TEXT",
+    )
+
+    /**
+     * v38 (上下文压缩 C 批, memory write gate) adds five columns to `MemoryEntity`: the record
+     * kind, its creation time, an optional validity end, and the vector + model id the gate
+     * needs to recognise a reworded duplicate.
+     *
+     * Backfilled here for the same reason as the mission columns: a restored v37 file carries
+     * the old three-column shape, and the "already current" path below stamps straight to
+     * [EXPECTED_VERSION] without walking the auto-migrations. `MemoryEntity` is an *upstream*
+     * table, so it is never created by [FORK_ONLY_DDL] — hence the table-exists guard at the
+     * call site, mirroring `workspaces`.
+     */
+    private val MEMORY_V38_COLUMN_DDL: List<Pair<String, String>> = listOf(
+        "kind" to "ALTER TABLE `MemoryEntity` ADD COLUMN `kind` TEXT NOT NULL DEFAULT 'note'",
+        "created_at" to "ALTER TABLE `MemoryEntity` ADD COLUMN `created_at` INTEGER NOT NULL DEFAULT 0",
+        "valid_to" to "ALTER TABLE `MemoryEntity` ADD COLUMN `valid_to` INTEGER",
+        "embedding" to "ALTER TABLE `MemoryEntity` ADD COLUMN `embedding` BLOB",
+        "embedding_model" to "ALTER TABLE `MemoryEntity` ADD COLUMN `embedding_model` TEXT",
     )
 
     /**
@@ -270,6 +289,15 @@ object ImportedDatabaseReconciler {
                             // v37 — workflow document path (批 C).
                             MISSION_V37_COLUMN_DDL.forEach { (column, ddl) ->
                                 if (!hasColumn(db, "missions", column)) {
+                                    db.execSQL(ddl)
+                                }
+                            }
+                        }
+                        // v38 — the memory write gate's columns. `MemoryEntity` is an upstream
+                        // table: a pre-2.x backup may not carry it at all, so guard first.
+                        if (tableExists(db, "MemoryEntity")) {
+                            MEMORY_V38_COLUMN_DDL.forEach { (column, ddl) ->
+                                if (!hasColumn(db, "MemoryEntity", column)) {
                                     db.execSQL(ddl)
                                 }
                             }

@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.runtime
 
 import kotlin.uuid.Uuid
+import me.rerere.rikkahub.runtime.tools.MemoryKind
 
 /**
  * LoopGateways — the narrow interfaces through which the generation loop reaches the
@@ -16,9 +17,36 @@ import kotlin.uuid.Uuid
  *  Note the id types mirror the repo exactly: memory rows are Int-keyed, while
  *  assistantId travels as a String. */
 interface LoopMemoryGateway {
-    suspend fun addMemory(assistantId: String, content: String): LoopMemory
+    /**
+     * Stores one memory, or explains why it refused.
+     *
+     * The result is a [LoopMemoryWrite] rather than a stored row because the write is *gated*:
+     * a duplicate, a blank record or a full bank must come back to the model as a correction it
+     * can act on ("edit #12"), not as an exception the tool layer would turn into a generic
+     * failure. Kind rides along because the injection rules order and expire records by it.
+     */
+    suspend fun addMemory(assistantId: String, content: String, kind: MemoryKind): LoopMemoryWrite
     suspend fun updateContent(id: Int, content: String): LoopMemory
     suspend fun deleteMemory(id: Int)
+}
+
+/**
+ * Outcome of a gated memory write.
+ *
+ * [Rejected] is not an error path: it is the gate doing its job, and the tool renders it as a
+ * normal JSON result so the model can retry as an edit in the same turn.
+ */
+sealed interface LoopMemoryWrite {
+    data class Stored(val memory: LoopMemory) : LoopMemoryWrite
+
+    data class Rejected(
+        /** Wire reason: "blank" | "duplicate" | "capacity". */
+        val reason: String,
+        /** Model-facing instruction telling it what to do instead. */
+        val hint: String,
+        /** The record it should edit, when the rejection was a duplicate. */
+        val existing: LoopMemory? = null,
+    ) : LoopMemoryWrite
 }
 
 /**

@@ -31,6 +31,19 @@ val repositoryModule = module {
         MemoryRepository(get())
     }
 
+    /**
+     * The memory write gate: pure rules from :runtime + Room + the embedding model. Provided
+     * next to the repository because it is the repository's write door, not a feature of a
+     * particular surface.
+     */
+    single {
+        me.rerere.rikkahub.data.repository.MemoryWriteGate(
+            repository = get(),
+            memoryDAO = get(),
+            embeddings = get(),
+        )
+    }
+
     single {
         GenMediaRepository(get())
     }

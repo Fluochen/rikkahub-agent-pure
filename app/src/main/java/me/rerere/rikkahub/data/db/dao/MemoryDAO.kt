@@ -24,6 +24,27 @@ interface MemoryDAO {
     @Query("SELECT * FROM memoryentity WHERE id = :id")
     suspend fun getMemoryById(id: Int): MemoryEntity?
 
+    /**
+     * The records that are still true right now: never superseded, or superseded only in the
+     * future. Both the write gate (duplicate detection) and the prompt (injection) read this
+     * one query, so they can never disagree about what "live" means.
+     */
+    @Query(
+        "SELECT * FROM memoryentity WHERE assistant_id = :assistantId " +
+            "AND (valid_to IS NULL OR valid_to > :nowMs) ORDER BY created_at DESC, id DESC"
+    )
+    suspend fun getLiveMemories(assistantId: String, nowMs: Long): List<MemoryEntity>
+
+    /** Rows with no vector yet, so the gate can fill them in a bounded pass. */
+    @Query(
+        "SELECT * FROM memoryentity WHERE assistant_id = :assistantId AND embedding IS NULL " +
+            "ORDER BY created_at DESC, id DESC LIMIT :limit"
+    )
+    suspend fun getRowsMissingEmbedding(assistantId: String, limit: Int): List<MemoryEntity>
+
+    @Query("UPDATE memoryentity SET embedding = :embedding, embedding_model = :modelId WHERE id = :id")
+    suspend fun updateEmbedding(id: Int, embedding: ByteArray, modelId: String)
+
     @Insert
     suspend fun insertMemory(memory: MemoryEntity): Long
 

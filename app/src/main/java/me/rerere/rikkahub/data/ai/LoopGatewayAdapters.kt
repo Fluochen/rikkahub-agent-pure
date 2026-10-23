@@ -5,12 +5,15 @@ import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantMemory
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
+import me.rerere.rikkahub.data.repository.MemoryWriteGate
 import me.rerere.rikkahub.runtime.LoopAssistant
 import me.rerere.rikkahub.runtime.LoopMemory
 import me.rerere.rikkahub.runtime.LoopMemoryGateway
+import me.rerere.rikkahub.runtime.LoopMemoryWrite
 import me.rerere.rikkahub.runtime.LoopRecentChatsProvider
 import me.rerere.rikkahub.runtime.LoopSettings
 import me.rerere.rikkahub.runtime.RecentChatEntry
+import me.rerere.rikkahub.runtime.tools.MemoryKind
 import me.rerere.rikkahub.runtime.util.toLocalDate
 import kotlin.uuid.Uuid
 
@@ -21,9 +24,17 @@ import kotlin.uuid.Uuid
 
 class MemoryGatewayAdapter(
     private val memoryRepo: MemoryRepository,
+    /**
+     * Every model-originated write goes through the gate: it is the only place that can see the
+     * live bank and refuse a restatement. The repository stays behind it for reads and edits.
+     */
+    private val writeGate: MemoryWriteGate,
 ) : LoopMemoryGateway {
-    override suspend fun addMemory(assistantId: String, content: String): LoopMemory =
-        memoryRepo.addMemory(assistantId, content).toLoopMemory()
+    override suspend fun addMemory(
+        assistantId: String,
+        content: String,
+        kind: MemoryKind,
+    ): LoopMemoryWrite = writeGate.create(assistantId, content, kind)
 
     override suspend fun updateContent(id: Int, content: String): LoopMemory =
         memoryRepo.updateContent(id, content).toLoopMemory()

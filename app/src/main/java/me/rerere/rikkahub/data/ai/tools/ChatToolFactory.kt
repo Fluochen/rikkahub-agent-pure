@@ -33,6 +33,7 @@ class InvalidMcpServerNamesException(val names: List<String>) :
 class ChatToolFactory(
     private val json: Json,
     private val memoryRepository: MemoryRepository,
+    private val memoryWriteGate: me.rerere.rikkahub.data.repository.MemoryWriteGate,
     private val conversationRepository: ConversationRepository,
     private val localTools: LocalTools,
     private val mcpManager: McpManager,
@@ -55,7 +56,7 @@ class ChatToolFactory(
             addAll(
                 buildMemoryTools(
                     json = json,
-                    onCreation = { content -> memoryRepository.addMemory(memoryAssistantId, content).toLoopMemory() },
+                    onCreation = { content, kind -> memoryWriteGate.create(memoryAssistantId, content, kind) },
                     onUpdate = { id, content -> memoryRepository.updateContent(id, content).toLoopMemory() },
                     onDelete = { id -> memoryRepository.deleteMemory(id) },
                 )

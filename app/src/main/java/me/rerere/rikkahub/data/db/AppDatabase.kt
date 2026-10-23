@@ -75,7 +75,7 @@ import me.rerere.rikkahub.workflow.db.WorkflowRunEntity
         RunEventEntity::class,
         RunCheckpointEntity::class,
     ],
-    version = 37,
+    version = 38,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
@@ -151,6 +151,11 @@ import me.rerere.rikkahub.workflow.db.WorkflowRunEntity
         // Nullable addition, so Room's auto-diff handles it; the backup-restore path
         // backfills it in ImportedDatabaseReconciler.
         AutoMigration(from = 36, to = 37),
+        // v38 (上下文压缩 C 批, memory write gate): five columns on `MemoryEntity` — kind,
+        // created_at, valid_to, embedding, embedding_model. Every one carries a default or is
+        // nullable, so Room's auto-diff handles the addition; the backup-restore path backfills
+        // them in ImportedDatabaseReconciler.
+        AutoMigration(from = 37, to = 38),
     ]
 )
 @TypeConverters(TokenUsageConverter::class)
