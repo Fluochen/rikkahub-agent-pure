@@ -103,10 +103,10 @@
   <string name="assistant_page_max_tokens_no_limit">No limit</string>
   <string name="assistant_page_max_tokens_no_token_limit">No token limit</string>
   <string name="assistant_page_tool_result_budget">Tool result budget</string>
-  <string name="assistant_page_tool_result_budget_desc">Caps how much context a single tool result may occupy. Longer results keep their head and tail, and the full text is saved to /tool_outputs/ so the model can read it back on demand. Leave empty for the default behaviour.</string>
-  <string name="assistant_page_tool_result_budget_placeholder">Default (32 KB spill gate only)</string>
+  <string name="assistant_page_tool_result_budget_desc">Caps how much context a single tool result may occupy. The cut follows the content type: JSON keeps both ends plus any error records, logs keep every error line and the tail, diffs keep their hunk headers. The full text is saved to /tool_outputs/ and the model can read it back with tool_output_read. Leave empty to size it automatically from the model window.</string>
+  <string name="assistant_page_tool_result_budget_placeholder">Auto (1/20 of the model window, 400–2000)</string>
   <string name="assistant_page_tool_result_budget_active">Limit: about %d tokens per tool result</string>
-  <string name="assistant_page_tool_result_budget_off">Using the default limit (32 KB characters, head preview only)</string>
+  <string name="assistant_page_tool_result_budget_off">Auto: about 1/20 of the model window, 400–2000 tokens</string>
   <string name="assistant_page_advanced_section">Advanced / experimental</string>
   <string name="assistant_page_advanced_section_desc">Protocol-level and experimental switches. All default to off; turn one on only if you understand how it changes the model tool surface.</string>
   <string name="assistant_page_compact_context">Model-initiated context compaction</string>

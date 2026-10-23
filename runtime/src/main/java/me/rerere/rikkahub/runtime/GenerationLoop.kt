@@ -46,10 +46,12 @@ import me.rerere.ai.util.HttpException
 import me.rerere.ai.util.redactSecrets
 import me.rerere.rikkahub.runtime.limits.ConversationReasoningOverrides
 import me.rerere.rikkahub.runtime.limits.ToolRuntimeLimits
+import me.rerere.rikkahub.runtime.tools.ContentRouter
 import me.rerere.rikkahub.runtime.tools.ConversationInjections
 import me.rerere.rikkahub.runtime.tools.ToolExecutionRetryPolicy
+import me.rerere.rikkahub.runtime.tools.ToolResultBudget
 import me.rerere.rikkahub.runtime.tools.buildMemoryTools
-import me.rerere.rikkahub.runtime.tools.truncateToolResult
+import me.rerere.rikkahub.runtime.tools.buildTruncationNotice
 import me.rerere.rikkahub.runtime.usage.UsageCallContext
 import me.rerere.rikkahub.runtime.usage.UsagePurpose
 import me.rerere.rikkahub.runtime.usage.UsageRunContexts
@@ -1105,9 +1107,11 @@ class GenerationLoop(
                             executedTools += markedTool.copy(
                                 output = maybeTruncateToolOutput(
                                     toolCallId = tool.toolCallId,
+                                    toolName = tool.toolName,
                                     output = result,
                                     hasShellAccess = hasShellAccess,
                                     maxTokens = assistant.toolResultMaxTokens,
+                                    contextLength = model.contextLength,
                                 )
                             )
                             onToolExecuted?.let { hook ->
@@ -1622,157 +1626,84 @@ class GenerationLoop(
     }
 
     /**
-     * T-05 / (3) — run an idempotent READ-ONLY tool with a bounded number of retries when an
-     * attempt fails transiently.
+     * Bounds one tool result to its share of the model window.
      *
-     * Only reached when the assistant opted in via
-     * [me.rerere.rikkahub.data.model.Assistant.enableToolExecutionRetry] AND
-     * [ToolExecutionRetryPolicy.isIdempotentReadOnly] accepts the call — for `web_fetch` that
-     * means its arguments were inspected and the verb is GET/HEAD (T-11). With the flag off the
-     * caller's single-attempt path stays byte-identical. Two failure shapes are retried:
-     *  - a thrown transient exception (socket timeout / IO / retryable HTTP status), and
-     *  - a returned transient error envelope — most local network tools swallow the failure
-     *    into `{"error":"timeout"|"network_error"}` instead of throwing, so an exception-only
-     *    retry would never fire for the very tools this exists for.
-     * Cancellation always propagates, and the wall-clock turn budget still bounds every attempt,
-     * so retries can never carry a turn past its budget.
+     * The gate no longer depends on a workspace shell existing. Waiting for a shell meant that
+     * the conversations least able to recover a lost result — no shell, no `cat` — were the
+     * ones that had none of their results bounded. The budget is derived from the window
+     * instead (see [ToolResultBudget]) and the way back is [me.rerere.rikkahub.runtime.tools.buildToolOutputReadTool],
+     * which every surface gets.
+     *
+     * Fail-open rule: the result is only cut once the full text is safely on disk. A spill
+     * failure means the model keeps the whole result, because an over-budget request can still
+     * be retried or compacted, while a result nobody stored is simply gone.
      */
-    private suspend fun executeReadOnlyToolWithRetry(
-        toolDef: Tool,
-        args: kotlinx.serialization.json.JsonElement,
-        turnStartMs: Long,
-        firstAttemptRemainingMs: Long,
-    ): List<UIMessagePart> {
-        val outcome = ToolExecutionRetryPolicy.runWithRetries(
-            firstAttemptRemainingMs = firstAttemptRemainingMs,
-            remainingMsProvider = {
-                ToolRuntimeLimits.turnBudgetMs -
-                    (android.os.SystemClock.elapsedRealtime() - turnStartMs)
-            },
-            execute = { budgetMs -> withTimeoutOrNull(budgetMs) { toolDef.execute(args) } },
-            onRetry = { attemptNumber, failure ->
-                Log.w(
-                    TAG,
-                    "generateText: ${toolDef.name} transient failure, retrying " +
-                        "($attemptNumber/${ToolExecutionRetryPolicy.MAX_RETRIES})",
-                    failure,
-                )
-            },
-        )
-        return when (outcome) {
-            is ToolExecutionRetryPolicy.RetryOutcome.Completed -> outcome.output
-            is ToolExecutionRetryPolicy.RetryOutcome.Failed -> throw outcome.failure
-            is ToolExecutionRetryPolicy.RetryOutcome.TimedOut -> {
-                Log.w(TAG, "generateText: ${toolDef.name} cancelled — wall-clock budget exhausted mid-execution")
-                listOf(UIMessagePart.Text(json.encodeToString(buildJsonObject {
-                    put("error", JsonPrimitive("tool_cancelled_wall_clock"))
-                    put(
-                        "detail",
-                        JsonPrimitive("tool execution exceeded the ${ToolRuntimeLimits.turnBudgetMs / 1000}s turn budget")
-                    )
-                })))
-            }
-            is ToolExecutionRetryPolicy.RetryOutcome.BudgetExhausted -> {
-                Log.w(TAG, "generateText: ${toolDef.name} skipped — wall-clock budget already exceeded")
-                listOf(UIMessagePart.Text(json.encodeToString(buildJsonObject {
-                    put("error", JsonPrimitive("tool_cancelled_wall_clock"))
-                    put("detail", JsonPrimitive("turn budget exceeded before tool started"))
-                })))
-            }
-        }
-    }
-
     private fun maybeTruncateToolOutput(
         toolCallId: String,
+        toolName: String,
         output: List<UIMessagePart>,
         hasShellAccess: Boolean,
-        maxTokens: Int? = null,
+        maxTokens: Int?,
+        contextLength: Int?,
     ): List<UIMessagePart> {
         val textParts = output.filterIsInstance<UIMessagePart.Text>()
         val nonTextParts = output.filter { it !is UIMessagePart.Text }
+        if (textParts.isEmpty()) return output
         val totalChars = textParts.sumOf { it.text.length }
+        val fullText = textParts.joinToString("\n") { it.text }
 
-        // Phase 17 (⑥): optional per-tool-result token budget. Off by default (null = the
-        // char-based gate below, i.e. upstream behaviour untouched). When it IS set it can only
-        // ever tighten that gate, never loosen it: output that fits the token budget still has
-        // to clear the character gate.
-        if (maxTokens != null) {
-            val fullText = textParts.joinToString("\n") { it.text }
-            val outcome = truncateToolResult(text = fullText, maxTokens = maxTokens)
-            if (outcome.truncated) {
-                Log.i(
-                    TAG,
-                    "maybeTruncateToolOutput: tool $toolCallId trimmed to the ${maxTokens}-token budget " +
-                        "(${outcome.originalTokens} -> ${outcome.resultTokens} tokens, " +
-                        "${outcome.elidedChars} chars elided)"
+        val budget = ToolResultBudget.resolve(maxTokens, contextLength)
+        if (budget == null) {
+            // Explicitly opted out of the token budget: keep the legacy character gate, which
+            // still bounds the result when a shell exists to read the spill back.
+            if (totalChars <= MAX_TOOL_OUTPUT_CHARS || !hasShellAccess) return output
+            val preview = fullText.take(TOOL_OUTPUT_PREVIEW_CHARS)
+            val fileName = host.spillToolOutput(toolCallId, fullText)
+            return listOf(
+                UIMessagePart.Text(
+                    buildString {
+                        appendLine("[Tool output truncated: $totalChars characters total]")
+                        if (fileName != null) {
+                            appendLine("Full output saved to: /tool_outputs/$fileName")
+                            appendLine("Use shell to read: `cat /tool_outputs/$fileName`")
+                            appendLine("Use shell to search: `grep \"pattern\" /tool_outputs/$fileName`")
+                            appendLine()
+                        }
+                        append(preview)
+                    }
                 )
-                val fileName = host.spillToolOutput(toolCallId, fullText)
-                return listOf(
-                    UIMessagePart.Text(
-                        buildBudgetedTruncationNotice(
-                            totalChars = totalChars,
-                            fileName = fileName,
-                            showShellHints = hasShellAccess,
-                            budgetTokens = maxTokens,
-                            body = outcome.text,
-                        )
-                    )
-                ) + nonTextParts
-            }
+            ) + nonTextParts
         }
 
-        if (totalChars <= MAX_TOOL_OUTPUT_CHARS || !hasShellAccess) return output
-
-        Log.i(TAG, "maybeTruncateToolOutput: truncating tool $toolCallId output ($totalChars chars)")
-
-        val fullText = textParts.joinToString("\n") { it.text }
-        val preview = fullText.take(TOOL_OUTPUT_PREVIEW_CHARS)
+        val kind = ContentRouter.classify(toolName, fullText)
+        val routed = ContentRouter.compress(fullText, kind, budget)
+        if (!routed.truncated) return output
 
         val fileName = host.spillToolOutput(toolCallId, fullText)
+        if (fileName == null) {
+            Log.w(TAG, "maybeTruncateToolOutput: spill failed for $toolCallId, keeping the full result")
+            return output
+        }
 
+        Log.i(
+            TAG,
+            "maybeTruncateToolOutput: $toolCallId kind=$kind ${routed.originalTokens} -> " +
+                "${routed.resultTokens} tokens (budget=$budget, ${routed.elidedChars} chars elided)",
+        )
         return listOf(
             UIMessagePart.Text(
-                buildString {
-                    appendLine("[Tool output truncated: $totalChars characters total]")
-                    if (fileName != null) {
-                        appendLine("Full output saved to: /tool_outputs/$fileName")
-                        appendLine("Use shell to read: `cat /tool_outputs/$fileName`")
-                        appendLine("Use shell to search: `grep \"pattern\" /tool_outputs/$fileName`")
-                        appendLine()
-                    }
-                    append(preview)
-                }
+                buildTruncationNotice(
+                    kind = kind,
+                    originalTokens = routed.originalTokens,
+                    resultTokens = routed.resultTokens,
+                    totalChars = totalChars,
+                    fileName = fileName,
+                    hasShellAccess = hasShellAccess,
+                    body = routed.text,
+                )
             )
         ) + nonTextParts
     }
-
-    /**
-     * Header for a budget-trimmed tool result. The `cat`/`grep` hints are only advertised when a
-     * workspace shell is actually on the table this turn — pointing the model at a path it cannot
-     * read is worse than saying nothing.
-     */
-    private fun buildBudgetedTruncationNotice(
-        totalChars: Int,
-        fileName: String?,
-        showShellHints: Boolean,
-        budgetTokens: Int,
-        body: String,
-    ): String = buildString {
-        appendLine("[Tool output truncated to fit the ${budgetTokens}-token per-result budget]")
-        appendLine("[Original size: $totalChars characters]")
-        if (fileName != null) {
-            appendLine("Full output saved to: /tool_outputs/$fileName")
-            if (showShellHints) {
-                appendLine("Use shell to read: `cat /tool_outputs/$fileName`")
-                appendLine("Use shell to search: `grep \"pattern\" /tool_outputs/$fileName`")
-            }
-        } else {
-            appendLine("Full output could not be saved to disk; the trimmed text below is all that remains.")
-        }
-        appendLine()
-        append(body)
-    }
-
 }
 
 // ---------------------------------------------------------------------------

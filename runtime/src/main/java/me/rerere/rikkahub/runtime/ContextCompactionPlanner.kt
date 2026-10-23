@@ -2,6 +2,7 @@ package me.rerere.rikkahub.runtime
 
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.runtime.tools.TokenEstimator
 
 /**
  * Plans requests made to the compression model.
@@ -320,9 +321,12 @@ object ContextCompactionPlanner {
      * other non-ASCII content. ASCII text is estimated at three chars/token while non-ASCII
      * chars consume one token each. This intentionally overestimates mixed text to keep every
      * compression prompt safely below its planned budget.
+     *
+     * The arithmetic itself lives in [TokenEstimator] so the tool-result budget cannot drift
+     * from the compaction budget: two copies of this estimate disagreed at the edges, and a
+     * truncation that believes it saved less than it did makes every downstream decision wrong.
      */
-    fun estimateTokens(text: String): Int = estimateTokens(text, 0, text.length)
-        .coerceAtLeast(1)
+    fun estimateTokens(text: String): Int = TokenEstimator.estimate(text)
 
     private fun estimateTokens(text: String, startIndex: Int, endIndex: Int): Int {
         var asciiChars = 0L

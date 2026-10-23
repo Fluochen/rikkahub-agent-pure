@@ -1,7 +1,5 @@
 package me.rerere.rikkahub.runtime.tools
 
-import me.rerere.rikkahub.runtime.ContextCompactionPlanner
-
 /**
  * Phase 17 (⑥) — optional per-tool-result token budget.
  *
@@ -60,7 +58,7 @@ fun truncateToolResult(
     maxTokens: Int?,
     headRatio: Double = DEFAULT_TOOL_RESULT_HEAD_RATIO,
 ): TruncationOutcome {
-    val originalTokens = ContextCompactionPlanner.estimateTokens(text)
+    val originalTokens = TokenEstimator.estimate(text)
 
     if (maxTokens == null || maxTokens <= 0 || originalTokens <= maxTokens) {
         return TruncationOutcome(
@@ -79,8 +77,8 @@ fun truncateToolResult(
     val headBudget = (budget * ratio).toInt().coerceIn(0, budget)
     val tailBudget = budget - headBudget
 
-    val headEnd = advanceByTokens(text, from = 0, to = text.length, budget = headBudget, forward = true)
-    val tailStart = advanceByTokens(text, from = text.length, to = 0, budget = tailBudget, forward = false)
+    val headEnd = TokenEstimator.advanceByTokens(text, from = 0, to = text.length, budget = headBudget, forward = true)
+    val tailStart = TokenEstimator.advanceByTokens(text, from = text.length, to = 0, budget = tailBudget, forward = false)
 
     // Budget too small to split, or the two slices would overlap: keep the head only.
     if (tailBudget <= 0 || tailStart <= headEnd) {
@@ -91,7 +89,7 @@ fun truncateToolResult(
             text = rendered,
             truncated = true,
             originalTokens = originalTokens,
-            resultTokens = ContextCompactionPlanner.estimateTokens(rendered),
+            resultTokens = TokenEstimator.estimate(rendered),
             headChars = head.length,
             tailChars = 0,
             elidedChars = elided,
@@ -106,7 +104,7 @@ fun truncateToolResult(
         text = rendered,
         truncated = true,
         originalTokens = originalTokens,
-        resultTokens = ContextCompactionPlanner.estimateTokens(rendered),
+        resultTokens = TokenEstimator.estimate(rendered),
         headChars = head.length,
         tailChars = tail.length,
         elidedChars = elided,
@@ -119,32 +117,3 @@ fun truncateToolResult(
  */
 fun elisionMarker(elidedChars: Int): String =
     "\n…[$elidedChars characters elided to fit the tool-result budget]…\n"
-
-/**
- * Walks [text] between [from] (inclusive) and [to] (exclusive), advancing while the running
- * token estimate stays within [budget], and returns the index reached.
- *
- * Walking forward from 0 yields the end of the head slice; walking backward from
- * `text.length` yields the start of the tail slice. The estimator mirrors
- * [ContextCompactionPlanner.estimateTokens]: ASCII costs 1/3 token, everything else 1 token.
- */
-private fun advanceByTokens(
-    text: String,
-    from: Int,
-    to: Int,
-    budget: Int,
-    forward: Boolean,
-): Int {
-    if (budget <= 0) return from
-    var ascii = 0L
-    var nonAscii = 0L
-    var index = from
-    while (index != to) {
-        val char = text[if (forward) index else index - 1]
-        if (char.code <= 0x7F) ascii++ else nonAscii++
-        val tokens = nonAscii + (ascii + 2L) / 3L
-        if (tokens > budget) break
-        index += if (forward) 1 else -1
-    }
-    return index
-}

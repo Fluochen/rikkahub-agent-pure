@@ -108,6 +108,8 @@ import me.rerere.rikkahub.data.ai.tools.CompactionToolResult
 import me.rerere.rikkahub.data.ai.tools.buildCompactionTools
 import me.rerere.rikkahub.data.ai.tools.createWorkspaceTools
 import me.rerere.rikkahub.data.ai.tools.buildColdMemoryTools
+import me.rerere.rikkahub.data.ai.tools.buildToolOutputReadTool
+import me.rerere.rikkahub.runtime.tools.ToolOutputRules
 import me.rerere.rikkahub.data.ai.tools.buildLibrarySearchTool
 import me.rerere.rikkahub.data.ai.tools.createConversationTools
 import me.rerere.rikkahub.data.ai.tools.createMissionDispatchTools
@@ -117,6 +119,7 @@ import me.rerere.rikkahub.data.ai.tools.ColdMemoryRules
 import me.rerere.rikkahub.data.ai.tools.ColdMemoryWriteResult
 import me.rerere.rikkahub.data.ai.tools.shouldUseExternalWebSearch
 import me.rerere.rikkahub.data.preferences.isWorkspaceToolName
+import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.rikkahub.data.files.SkillManager
 import me.rerere.rikkahub.data.ai.transformers.Base64ImageToLocalFileTransformer
 import me.rerere.rikkahub.data.ai.transformers.ContextBudgetReminderTransformer
@@ -163,6 +166,7 @@ import me.rerere.workspace.WorkspaceStorageArea
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
 import me.rerere.rikkahub.utils.applyPlaceholders
+import java.io.File
 import java.time.Instant
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -1659,6 +1663,10 @@ class ChatService(
         // T-06 / (7) - cold memory (Markdown knowledge base). Same on both build paths so a
         // regenerate sees the surface the first pass had. Off unless enabled AND configured.
         addAll(createColdMemoryToolsIfConfigured(surfaceAssistant))
+        // The recovery path for a truncated tool result. Unconditional and on BOTH assembly
+        // paths, for the same reason cold memory is: a regenerate must see the surface the
+        // first pass had, and a truncation notice is useless if the reader is missing.
+        addAll(createToolOutputReadTools())
         // P4 — the file library's search, on both build paths so a regenerate sees the surface the
         // first pass had. Off unless enabled AND configured.
         addAll(createLibraryToolsIfConfigured(surfaceAssistant))
@@ -2118,6 +2126,9 @@ class ChatService(
                     addAll(createWorkspaceToolsIfReady(surfaceAssistant.workspaceId?.toString(), conversation.workspaceCwd))
                     // T-06 / (7) - cold memory, mirroring the regenerate path above.
                     addAll(createColdMemoryToolsIfConfigured(surfaceAssistant))
+                    // The recovery path for a truncated tool result, mirrored from the
+                    // regenerate path above so both surfaces are identical.
+                    addAll(createToolOutputReadTools())
         // P4 — the file library's search, on both build paths so a regenerate sees the surface the
         // first pass had. Off unless enabled AND configured.
         addAll(createLibraryToolsIfConfigured(surfaceAssistant))
@@ -2690,6 +2701,34 @@ class ChatService(
             return emptyList()
         }
         return createWorkspaceTools(workspaceId, workspaceRepository, cwd)
+    }
+
+    /**
+     * `tool_output_read` — the way back to a result the loop spilled.
+     *
+     * Attached unconditionally. It is read-only, needs no approval, and carries one small
+     * schema, while the thing it exists for is unavoidable: the loop bounds every tool result
+     * to its budget, so the recovery path must already be on the surface when the model reads
+     * a truncation notice. A tool that only appeared on the next turn would hand the model a
+     * file name it could not read during the turn that needed it.
+     *
+     * The directory is the app's own `tool_outputs/`, written by
+     * `AndroidLoopHostBridge.spillToolOutput` through the same [ToolOutputRules] name, so the
+     * reader can address exactly what the writer produced and nothing else.
+     */
+    private fun createToolOutputReadTools(): List<Tool> = buildToolOutputReadTool { fileName, offset, limitChars ->
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val dir = File(context.filesDir, FileFolders.TOOL_OUTPUTS)
+                val file = File(dir, fileName)
+                // Defence in depth: the rule already rejects separators, but a resolved path
+                // escaping the directory must never be read even if that rule regresses.
+                val rootPath = dir.canonicalPath + File.separator
+                if (!file.canonicalPath.startsWith(rootPath)) return@runCatching null
+                if (!file.isFile) return@runCatching null
+                ToolOutputRules.slice(file.readText(), offset, limitChars)
+            }.getOrNull()
+        }
     }
 
     /**
