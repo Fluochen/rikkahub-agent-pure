@@ -15,6 +15,18 @@ import kotlinx.serialization.Serializable
 data class SubAgentRun(
     val id: String,
     val parentChatId: String?,         // the parent assistant chat that dispatched this — used for /stop cascade
+    /**
+     * G 批 — nesting depth of this run: 0 = dispatched from a user conversation, 1 = its child,
+     * and so on. Bounded by [SubAgentDispatchProfileRules.caps]`(profile).maxNestingDepth`.
+     * A resumed run keeps the depth it was created with.
+     */
+    val depth: Int = 0,
+    /**
+     * G 批 — the ROOT conversation of this dispatch tree (the user's chat). Billing is summed by
+     * `parent_run_id`, so every level records the same root; without it a nested tree would only
+     * see its own subtree and slip past the orchestration budget.
+     */
+    val rootChatId: String? = null,
     /** The sub-agent's own execution conversation. Set once the run body creates (or reuses) it. */
     val conversationId: String? = null,
     /**

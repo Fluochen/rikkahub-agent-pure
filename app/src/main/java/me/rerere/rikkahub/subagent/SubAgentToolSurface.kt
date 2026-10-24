@@ -103,8 +103,16 @@ object SubAgentToolSurface {
      * cancel. Inside a sub-agent they only ever answer "no_recursion" (three `isHeadless` guards
      * refuse them), so they are pure token cost plus a wasted tool trip. Excluded by PREFIX, so a
      * future `subagent_*` handle is covered without touching this file.
+     *
+     * G 批 — one exception, and it is opt-in per surface: a child whose depth is still under the
+     * profile's cap keeps `subagent_dispatch` ([DISPATCH_TOOL_NAME]) so it can decompose its own
+     * work. `list` / `get` / `cancel` / `create` / `fanout` stay denied — a child that needs them
+     * is doing the parent's job.
      */
     const val INTERNAL_TOOL_PREFIX: String = "subagent_"
+
+    /** The one internal tool a nested child may keep (depth permitting) — see [denialReason]. */
+    const val DISPATCH_TOOL_NAME: String = "subagent_dispatch"
 
     /**
      * `ask_user` is not a permission gate — it is a request for human input, and a headless run
@@ -118,8 +126,15 @@ object SubAgentToolSurface {
      * Why a tool may not be handed to a sub-agent, or null when it is fine. The strings match the
      * vocabulary AAAelina's `SubAgentRun` uses for the same rejections, so an error surfaced to a
      * model looks the same in both codebases.
+     *
+     * [allowSubagentDispatch] is the one exception, and it is deliberate: a nested child (depth
+     * still under the profile's cap) keeps `subagent_dispatch` so it can decompose its own work.
+     * It is exempted from BOTH the `subagent_` prefix rule and the `NO_ALWAYS_ALLOW` approval rule,
+     * because a headless run auto-approves everything anyway — the depth cap, not the approval
+     * list, is what bounds nesting.
      */
-    fun denialReason(toolName: String): String? = when {
+    fun denialReason(toolName: String, allowSubagentDispatch: Boolean = false): String? = when {
+        allowSubagentDispatch && toolName == DISPATCH_TOOL_NAME -> null
         toolName.startsWith(INTERNAL_TOOL_PREFIX) -> "tool_unavailable_headless"
         toolName == ASK_USER_TOOL_NAME -> "tool_unavailable_headless"
         toolName in UI_BOUND_TOOL_NAMES -> "tool_unavailable_headless"
@@ -129,7 +144,8 @@ object SubAgentToolSurface {
     }
 
     /** True when [toolName] must never reach a sub-agent's surface. */
-    fun isDenied(toolName: String): Boolean = denialReason(toolName) != null
+    fun isDenied(toolName: String, allowSubagentDispatch: Boolean = false): Boolean =
+        denialReason(toolName, allowSubagentDispatch) != null
 
     /**
      * The headless-safe subset of [callerToolNames] — the pure policy function, used to validate a

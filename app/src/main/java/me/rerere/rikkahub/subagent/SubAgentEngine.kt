@@ -190,27 +190,48 @@ class SubAgentEngine(
          */
         resumeOf: SubAgentRun? = null,
     ): DispatchResult = withContext(Dispatchers.Default) {
-        // Recursion guard: if the caller is in a headless context already (cron job /
-        // workflow / another sub-agent), reject. v1 does not allow nested sub-agents.
-        if (parentChatId != null) {
-            val parentUuid = runCatching { Uuid.parse(parentChatId) }.getOrNull()
-            if (parentUuid != null && HeadlessConversations.isHeadless(parentUuid)) {
-                return@withContext DispatchResult.Reject(
-                    "no_recursion",
-                    "sub-agent dispatch is not allowed from inside another headless run"
-                )
-            }
-        }
-        val validation = SubAgentRequestValidator.validate(request)
-        if (validation is SubAgentRequestValidator.Result.Reject) {
-            return@withContext DispatchResult.Reject(validation.error, validation.detail)
-        }
         val profile = currentProfile()
         if (!SubAgentDispatchProfileRules.isDispatchEnabled(profile)) {
             return@withContext DispatchResult.Reject(
                 "disabled_by_policy",
                 "sub-agent dispatch is disabled (profile = $profile). Do all work inline.",
             )
+        }
+        // 嵌套：子代理可以再派子代理，但深度封顶（G 批）。
+        //
+        // 三种调用者要区分开：
+        //  - 普通会话（不是 headless）→ 顶级派发，深度 0；
+        //  - 子代理会话（headless 且在 [SubAgentDepths] 里有记录）→ 深度 = 记录值，按档位判上限；
+        //  - 其它 headless（cron / workflow / external automation）→ 仍然拒绝。它们没有「层」
+        //    的概念，放开等于把无人值守脚本变成可无限自我复制的入口。
+        val parentUuid = parentChatId?.let { runCatching { Uuid.parse(it) }.getOrNull() }
+        val parentIsHeadless = parentUuid?.let { HeadlessConversations.isHeadless(it) } == true
+        val parentPlacement =
+            if (parentIsHeadless) parentUuid?.let { SubAgentDepths.placementOf(it) } else null
+        val parentDepth: Int = if (parentIsHeadless) {
+            val recorded = parentPlacement
+                ?: return@withContext DispatchResult.Reject(
+                    "no_recursion",
+                    "sub-agent dispatch is not allowed from inside a headless run that is not a " +
+                        "sub-agent (cron / workflow / external automation). Run the work inline.",
+                )
+            val cap = SubAgentDispatchProfileRules.caps(profile).maxNestingDepth
+            if (!SubAgentNestingRules.canSpawn(recorded.depth, cap)) {
+                return@withContext DispatchResult.Reject(
+                    "recursion_depth",
+                    "nesting depth ${recorded.depth + 1} would exceed the cap $cap for profile " +
+                        "$profile; finish this level inline instead of spawning another agent",
+                )
+            }
+            recorded.depth
+        } else {
+            SubAgentNestingRules.TOP_LEVEL_DEPTH
+        }
+        // 整棵树的预算根：嵌套时沿用父树的根，顶级派发就用当前会话自己。
+        val orchestrationRoot: String? = parentPlacement?.rootConversationId ?: parentChatId
+        val validation = SubAgentRequestValidator.validate(request)
+        if (validation is SubAgentRequestValidator.Result.Reject) {
+            return@withContext DispatchResult.Reject(validation.error, validation.detail)
         }
         val cleaned = (validation as SubAgentRequestValidator.Result.Ok).request.let {
             it.copy(
@@ -221,7 +242,7 @@ class SubAgentEngine(
 
         // P2-13 — the budget gate. Judged before a concurrency slot is taken, so an
         // over-budget orchestration is refused on policy rather than on capacity.
-        val gate = checkOrchestrationBudget(parentAssistantId, parentChatId, cleaned)
+        val gate = checkOrchestrationBudget(parentAssistantId, orchestrationRoot, cleaned)
         gate.refusal?.let { refusal ->
             return@withContext refusal
         }
@@ -235,9 +256,14 @@ class SubAgentEngine(
 
         val runId = Uuid.random().toString()
         val now = System.currentTimeMillis()
+        // 续聊沿用原 run 的深度（同一个代理，层级不变）；普通派发是父深度 + 1。
+        val childDepth = resumeOf?.depth ?: SubAgentNestingRules.childDepth(parentDepth)
+        val rootChatId = resumeOf?.rootChatId ?: orchestrationRoot
         val initialRun = SubAgentRun(
             id = runId,
             parentChatId = parentChatId,
+            depth = childDepth,
+            rootChatId = rootChatId,
             conversationId = resumeOf?.conversationId,
             agentName = resumeOf?.agentName ?: cleaned.agentName,
             resumedFrom = resumeOf?.id,
@@ -300,12 +326,22 @@ class SubAgentEngine(
                 put("label", initialRun.label)
                 put("parent_assistant_id", parentAssistantId)
                 put("run_in_background", cleaned.runInBackground)
+                // G 批 — 层级与预算根，时间线和成本视图都要靠它区分「第几层」。
+                put("depth", childDepth)
+                initialRun.rootChatId?.let { put("root_chat_id", it) }
             },
         )
         ledgerIds[runId] = ledgerId
 
         val executionJob = appScope.launch(Dispatchers.IO) {
-            executeRun(runId, parentAssistantId, parentChatId, cleaned, resumeOf?.conversationId)
+            executeRun(
+                runId = runId,
+                parentAssistantId = parentAssistantId,
+                parentChatId = parentChatId,
+                request = cleaned,
+                resumeConversationId = resumeOf?.conversationId,
+                orchestrationRoot = rootChatId,
+            )
         }
         registry.setJob(runId, executionJob)
 
@@ -529,6 +565,7 @@ class SubAgentEngine(
         parentChatId: String?,
         request: SubAgentRequest,
         resumeConversationId: String? = null,
+        orchestrationRoot: String? = null,
     ) {
         // P2-08 — hold the chat foreground service for the run's ENTIRE life, not just the model
         // calls inside it. ChatService already claims the service around each generation, but a
@@ -544,7 +581,14 @@ class SubAgentEngine(
         // generation never has its service torn down by an orchestration ending, and vice versa.
         val releaseForegroundHold = chatService.retainForegroundForActiveRun()
         try {
-            runSubAgentBody(runId, parentAssistantId, parentChatId, request, resumeConversationId)
+            runSubAgentBody(
+                runId = runId,
+                parentAssistantId = parentAssistantId,
+                parentChatId = parentChatId,
+                request = request,
+                resumeConversationId = resumeConversationId,
+                orchestrationRoot = orchestrationRoot,
+            )
         } finally {
             releaseForegroundHold()
             // P2-12d — the run is over; drop its attribution so no later call inherits it.
@@ -563,6 +607,7 @@ class SubAgentEngine(
         parentChatId: String?,
         request: SubAgentRequest,
         resumeConversationId: String? = null,
+        orchestrationRoot: String? = null,
     ) {
         registry.update(runId) { it.copy(status = SubAgentStatus.RUNNING) }
         ledgerIds[runId]?.let { agentRunRepo.setStatus(it, AgentRunStatus.running) }
@@ -694,18 +739,33 @@ class SubAgentEngine(
         // P2-12d — attribute this run's model calls to it, so the ledger can price the
         // dispatch and the parent→child tree has a run id to hang off. The parent id is the
         // conversation that dispatched it (the same value written to agent_runs.parent_run_id).
+        // G 批 — 记的是整棵树的根，不是直接父会话：用量表按 parent_run_id 汇总，只有同根才能
+        // 让 orchestration budget 看见孙辈的花费。
         UsageRunContexts.mark(
             conversationId = conv.id.toString(),
             runId = runId,
-            parentRunId = parentChatId,
+            parentRunId = orchestrationRoot ?: parentChatId,
+        )
+        // G 批 — 这个子代理自己的嵌套深度，以及它还能不能再派。
+        //
+        // 深度表只在 run 活着的时候有意义（结束的 run 续聊时从 run.depth 恢复），所以写在这里、
+        // 清在 finally。
+        val runDepth = registry.get(runId)?.depth ?: SubAgentNestingRules.TOP_LEVEL_DEPTH
+        val nestingCap = SubAgentDispatchProfileRules.caps(currentProfile()).maxNestingDepth
+        val childMayDispatch = SubAgentNestingRules.canSpawn(runDepth, nestingCap)
+        SubAgentDepths.mark(
+            conversationId = conv.id,
+            depth = runDepth,
+            rootConversationId = orchestrationRoot ?: conv.id.toString(),
         )
         // T-09 / (8) + P2-04 — freeze this run's tool surface for as long as it lives; ChatService
-        // applies the filter at every tool-assembly site. A record is written when EITHER knob is
-        // on: the parent assistant's `enableSubAgentToolSurface` (which also narrows the surface to
-        // the dispatcher's `tools` allow-list), or the child's own surface (P2-04). With neither,
-        // no record is written at all, so `apply` stays an identity and the child's schemas are
-        // byte-for-byte what they were.
-        if (freezeToolSurface || childAssistant != null) {
+        // applies the filter at every tool-assembly site.
+        //
+        // 无条件冻结（G 批改动）：以前只有「父助手开了 tool surface」或「专家自带 surface」才写记录，
+        // 两个都没开时子代理会原样继承父代理的完整工具面 —— 包括 ask_user、NO_ALWAYS_ALLOW 里那些
+        // 本该每次弹审批的工具。headless 会话自动放行，这就是文档里说的那个提权口子。
+        // 现在每个子代理都有记录，地板始终生效；这份记录同时承载「能不能再派」这一个位。
+        run {
             // Belt and braces: subagent_dispatch already REJECTS a blocked name outright, but the
             // engine is the layer that actually owns the surface, and a future caller (a workflow
             // step, an external automation, a test) could hand us a SubAgentRequest directly.
@@ -725,6 +785,7 @@ class SubAgentEngine(
                 } else {
                     null
                 },
+                allowSubagentDispatch = childMayDispatch,
             )
         }
         try {
@@ -873,6 +934,7 @@ class SubAgentEngine(
             ConversationToolStepLimits.clear(conv.id)
             ConversationReasoningOverrides.clear(conv.id)
             me.rerere.rikkahub.service.run.ConversationRunRegistry.unbind(conv.id)
+            SubAgentDepths.release(conv.id)
             // T-09 / (8) + P2-04 — release in the same finally that unmarks the conversation, so a
             // cancelled / failed / timed-out run cannot leave a stale freeze behind. Releasing is
             // unconditional and safe: removing a record that was never written is a no-op.
