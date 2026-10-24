@@ -49,6 +49,28 @@ class SystemPromptBuilderTest {
     }
 
     @Test
+    fun `app injections sit in stable after the assistant prompt and before tool prompts`() {
+        val (stable, volatile) = builder.buildSections(
+            assistantPrompt = "User persona",
+            systemInjectionPrompt = "<system_injections>app rules</system_injections>",
+            memoryPrompt = "**Memories** m1",
+            toolPrompts = listOf("tool_a docs"),
+        )
+        assertTrue(stable.indexOf("User persona") < stable.indexOf("<system_injections>"))
+        assertTrue(stable.indexOf("</system_injections>") < stable.indexOf("Tool cost guidance"))
+        assertFalse(stable.contains("**Memories**"))
+        assertTrue(volatile.contains("**Memories** m1"))
+    }
+
+    @Test
+    fun `blank app injections leave the prompt byte-identical`() {
+        assertEquals(
+            builder.buildSections(assistantPrompt = "A", memoryPrompt = "M"),
+            builder.buildSections(assistantPrompt = "A", systemInjectionPrompt = "  ", memoryPrompt = "M"),
+        )
+    }
+
+    @Test
     fun `stable prefix is byte-identical when only volatile inputs change`() {
         fun stableFor(mem: String, chats: String) = builder.buildSections(
             assistantPrompt = "You are helpful.",

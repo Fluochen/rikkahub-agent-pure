@@ -140,6 +140,16 @@ fun CreateMissionSheet(
     var workflowPath by remember { mutableStateOf<String?>(null) }
     var workflowNames by remember { mutableStateOf<List<String>>(emptyList()) }
 
+    // Default to the mission workspace on a fresh install, so the first create already has a
+    // home for `workflows/` and the picker below is populated.
+    androidx.compose.runtime.LaunchedEffect(workspaces) {
+        if (workspaceId == null) {
+            workspaces.firstOrNull {
+                it.name == me.rerere.rikkahub.service.mission.MissionCreationService.DEFAULT_MISSION_WORKSPACE_NAME
+            }?.let { workspaceId = it.id }
+        }
+    }
+
     // Reload the list whenever the workspace changes; drop a selection that no longer exists.
     androidx.compose.runtime.LaunchedEffect(workspaceId) {
         workflowNames = workspaceId

@@ -116,6 +116,7 @@ import me.rerere.rikkahub.runtime.tools.ToolOutputRules
 import me.rerere.rikkahub.data.ai.tools.buildLibrarySearchTool
 import me.rerere.rikkahub.data.ai.tools.createConversationTools
 import me.rerere.rikkahub.data.ai.tools.createMissionDispatchTools
+import me.rerere.rikkahub.data.ai.tools.createMissionCreateTool
 import me.rerere.rikkahub.data.ai.tools.buildMemorySearchTool
 import me.rerere.rikkahub.data.ai.tools.ColdMemoryDoc
 import me.rerere.rikkahub.data.ai.tools.ColdMemoryRules
@@ -508,6 +509,8 @@ class ChatService(
     private val conversationIndex: me.rerere.rikkahub.data.vector.ConversationIndexCoordinator,
     /** Moxw workbench - tracks conversation-bound missions; artifact logging hooks below. */
     private val missionEngine: me.rerere.rikkahub.data.mission.MissionEngine,
+    /** One creation path for missions the model starts with `mission_create`. */
+    private val missionCreationProvider: () -> me.rerere.rikkahub.service.mission.MissionCreationService,
     /** P5 — per-step run breakpoints, written from the loop's checkpoint hook. */
     private val runCheckpointRepository: me.rerere.rikkahub.data.agentrun.RunCheckpointRepository,
     /** P6 — multi-run orchestration behind the `mission_dispatch` tool. */
@@ -1739,6 +1742,24 @@ class ChatService(
                 }
             )
         }
+        // Model-initiated missions. Outside a mission round only, so a running mission cannot
+        // spawn missions recursively; the tool itself asks for approval before spending tokens
+        // after this turn ends.
+        if (settings.allowModelMissionCreation &&
+            missionIdForReport == null &&
+            !me.rerere.rikkahub.data.ai.tools.HeadlessConversations.isHeadless(conversationId)
+        ) {
+            val creation = runCatching { missionCreationProvider() }.getOrNull()
+            if (creation != null) {
+                add(
+                    createMissionCreateTool(
+                        creation = creation,
+                        assistantId = surfaceAssistant.id,
+                        workspaceId = surfaceAssistant.workspaceId?.toString(),
+                    )
+                )
+            }
+        }
         // P5 — history search. Registered here rather than in ChatToolFactory because that
         // factory's createTools has no callers in the repository: the model never actually had
         // this tool in the chat path. Gated on the same flag the static recent-chats reference
@@ -2085,6 +2106,11 @@ class ChatService(
                 },
                 messages = messagesForGeneration,
                 assistant = assistant.toLoopAssistant(),
+                // App-level rules (tool discipline, files, verification, memory, missions). Stable
+                // turn to turn, so it rides the cached prefix instead of the volatile tail.
+                systemInjection = me.rerere.rikkahub.runtime.SystemInjections.render(
+                    settings.enabledSystemInjections,
+                ),
                 conversationId = conversationId,
                 conversationSystemPrompt = conversation.customSystemPrompt,
                 conversationModeInjectionIds = conversation.modeInjectionIds,
@@ -2242,6 +2268,24 @@ class ChatService(
                     }
                 }
             )
+        }
+        // Model-initiated missions. Outside a mission round only, so a running mission cannot
+        // spawn missions recursively; the tool itself asks for approval before spending tokens
+        // after this turn ends.
+        if (settings.allowModelMissionCreation &&
+            missionIdForReport == null &&
+            !me.rerere.rikkahub.data.ai.tools.HeadlessConversations.isHeadless(conversationId)
+        ) {
+            val creation = runCatching { missionCreationProvider() }.getOrNull()
+            if (creation != null) {
+                add(
+                    createMissionCreateTool(
+                        creation = creation,
+                        assistantId = surfaceAssistant.id,
+                        workspaceId = surfaceAssistant.workspaceId?.toString(),
+                    )
+                )
+            }
         }
         // P5 — history search. Registered here rather than in ChatToolFactory because that
         // factory's createTools has no callers in the repository: the model never actually had

@@ -290,6 +290,38 @@ fun SettingPreferencesGeneralPage(vm: SettingVM = koinViewModel()) {
                             )
                         },
                     )
+                    item(
+                        headlineContent = { Text(stringResource(R.string.setting_agent_injections_title)) },
+                        supportingContent = { Text(stringResource(R.string.setting_agent_injections_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = settings.enabledSystemInjections.isNotEmpty(),
+                                onCheckedChange = { enabled ->
+                                    vm.updateSettings {
+                                        it.copy(
+                                            enabledSystemInjections = if (enabled) {
+                                                me.rerere.rikkahub.runtime.SystemInjections.DEFAULT_IDS
+                                            } else {
+                                                emptySet()
+                                            }
+                                        )
+                                    }
+                                }
+                            )
+                        },
+                    )
+                    item(
+                        headlineContent = { Text(stringResource(R.string.setting_agent_missions_title)) },
+                        supportingContent = { Text(stringResource(R.string.setting_agent_missions_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = settings.allowModelMissionCreation,
+                                onCheckedChange = { enabled ->
+                                    vm.updateSettings { it.copy(allowModelMissionCreation = enabled) }
+                                }
+                            )
+                        },
+                    )
                 }
             }
         }

@@ -28,9 +28,9 @@ data class Assistant(
     // 上下文消息条数上限, 超出后阶梯式截断; 0 表示不限制
     val contextMessageLimit: Int = 0,
     val streamOutput: Boolean = true,
-    val enableMemory: Boolean = false,
+    val enableMemory: Boolean = true,
     val useGlobalMemory: Boolean = false, // 使用全局共享记忆而非助手隔离记忆
-    val enableRecentChatsReference: Boolean = false,
+    val enableRecentChatsReference: Boolean = true,
     val messageTemplate: String = "{{ message }}",
     val presetMessages: List<UIMessage> = emptyList(),
     val quickMessageIds: Set<Uuid> = emptySet(),
@@ -101,7 +101,7 @@ data class Assistant(
     // so the compaction logic itself lives in exactly one place. The shortened context applies
     // from the next turn; the turn that triggered it keeps its raw history.
     // Appended last on purpose: a new field may never shift the position of an existing one.
-    val enableCompactContextTool: Boolean = false,
+    val enableCompactContextTool: Boolean = true,
     // Phase 17 (①) — tool exposure. This field used to hold DIRECT / PROGRESSIVE_CATALOG and let an
     // assistant inject every enabled tool's schema up front. Moxw removed the direct dump: the tool
     // list is always built from `tool_search` / `tool_open` plus what the turn actually retrieved,
@@ -113,7 +113,7 @@ data class Assistant(
     // sub-agent. Off by default, and the flag gates the tool SCHEMA as well as the
     // behaviour: with it off, the subagent_dispatch definition is byte-identical to the
     // pre-T-04 one (prompt-cache safe), and the model has no parameter to fill in.
-    val enableSubAgentContextRefs: Boolean = false,
+    val enableSubAgentContextRefs: Boolean = true,
     // T-09 / (8) — freeze the tool surface of sub-agents this assistant dispatches. Off by
     // default. When ON, every sub-agent conversation is filtered down to the headless-safe
     // surface (no `subagent_*` handles, no per-call-approval tools such as eval_javascript /

@@ -428,6 +428,11 @@ class GenerationLoop(
         outputVisualTransform: suspend (List<UIMessage>) -> List<UIMessage> = { it },
         outputFinishTransform: suspend (List<UIMessage>) -> List<UIMessage> = { it },
         assistant: LoopAssistant,
+        /**
+         * App-level rules rendered by [SystemInjections]. Stable turn to turn, so it rides the
+         * cached prefix. Default "" keeps every caller that does not opt in byte-identical.
+         */
+        systemInjection: String = "",
         memories: List<LoopMemory>? = null,
         /** Live memories the injection rules left out; only used to explain the gap to the model. */
         memoriesOmitted: Int = 0,
@@ -621,6 +626,7 @@ class GenerationLoop(
                         .orEmpty()
                     generateInternal(
                         assistant = assistant,
+                        systemInjection = systemInjection,
                         settings = settings,
                         systemAddendum = systemAddendum,
                         messages = messages,
@@ -1248,6 +1254,7 @@ class GenerationLoop(
 
     private suspend fun generateInternal(
         assistant: LoopAssistant,
+        systemInjection: String = "",
         settings: LoopSettings,
         systemAddendum: String? = null,
         messages: List<UIMessage>,
@@ -1305,6 +1312,7 @@ class GenerationLoop(
             // cached prefix, the volatile part sits after it. See SystemPromptBuilder.
             val (stableSystem, volatileSystem) = systemPromptBuilder.buildSections(
                 assistantPrompt = effectiveSystemPrompt,
+                systemInjectionPrompt = systemInjection,
                 memoryPrompt = memoryPrompt,
                 factsPrompt = factsPrompt,
                 recentChatsPrompt = recentChatsPrompt,

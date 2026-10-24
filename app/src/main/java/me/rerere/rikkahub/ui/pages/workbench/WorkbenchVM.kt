@@ -28,6 +28,7 @@ class WorkbenchVM(
     private val missionRepository: MissionRepository,
     private val missionLauncher: MissionLauncher,
     private val workspaceRepository: me.rerere.rikkahub.data.repository.WorkspaceRepository,
+    private val missionCreation: me.rerere.rikkahub.service.mission.MissionCreationService,
     subAgentRegistry: SubAgentRegistry,
 ) : ViewModel() {
 
@@ -81,6 +82,20 @@ class WorkbenchVM(
     }
 
     /**
+     * Creates and seeds the default mission workspace before the create sheet opens, so the
+     * workflow picker has something to show on a brand-new install instead of only offering
+     * "let the model choose".
+     */
+    fun prepareWorkflowLibrary() {
+        viewModelScope.launch {
+            runCatching {
+                val workspace = missionCreation.defaultWorkspace()
+                missionCreation.seedWorkflows(workspace.id)
+            }
+        }
+    }
+
+    /**
      * 批 C — `workflows/ 下的 .md` of a workspace, for the create sheet's playbook picker.
      * Best-effort: an unreadable workspace yields an empty list (the sheet then shows
      * 「由模型自选」 only).
@@ -102,6 +117,15 @@ class WorkbenchVM(
             val triggerJson = draft.trigger?.let { spec ->
                 runCatching { JsonInstant.encodeToString<TriggerSpec>(spec) }.getOrNull()
             }
+            // Default workspace + workflow seeding: a mission created without an explicit
+            // workspace used to have no `workflows/` folder at all, so the picker and the
+            // model's chooser were always empty. The creation service owns that guarantee.
+            val workspaceId = draft.workspaceId ?: runCatching {
+                missionCreation.defaultWorkspace().id
+            }.getOrNull()
+            if (workspaceId != null) {
+                runCatching { missionCreation.seedWorkflows(workspaceId) }
+            }
             val mission = missionRepository.create(
                 title = draft.title,
                 description = draft.description,
@@ -112,7 +136,7 @@ class WorkbenchVM(
                 maxRunsPerDay = if (triggerJson != null) draft.maxRunsPerDay else null,
                 workflowPath = draft.workflowPath,
             )
-            missionRepository.updateWorkspaceAndAssistant(mission.id, draft.workspaceId, draft.assistantId)
+            missionRepository.updateWorkspaceAndAssistant(mission.id, workspaceId, draft.assistantId)
             draft.approvalMode?.let { missionRepository.updateApprovalMode(mission.id, it) }
             if (draft.maxResumeRounds != null || draft.stallRounds != null || draft.tokenBudget != null ||
                 draft.requireConfirmation

@@ -18,6 +18,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Add01
+import me.rerere.hugeicons.stroke.BookOpen01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.datastore.SettingsStore
@@ -59,12 +60,24 @@ fun WorkbenchPage(currentConversationId: String? = null) {
         }
     }
 
+    // Seed the default workflow library the first time the create sheet opens; the sheet's
+    // picker reads from the same workspace, so this must happen before it composes its list.
+    LaunchedEffect(showSheet) {
+        if (showSheet) vm.prepareWorkflowLibrary()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(text = stringResource(R.string.workbench_title)) },
                 navigationIcon = { BackButton() },
                 actions = {
+                    IconButton(onClick = { navController.navigate(Screen.MissionWorkflows) }) {
+                        Icon(
+                            imageVector = HugeIcons.BookOpen01,
+                            contentDescription = stringResource(R.string.mission_workflows_title),
+                        )
+                    }
                     IconButton(onClick = { showSheet = true }) {
                         Icon(
                             imageVector = HugeIcons.Add01,
