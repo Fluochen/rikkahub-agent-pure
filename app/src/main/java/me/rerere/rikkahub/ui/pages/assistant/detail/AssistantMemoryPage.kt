@@ -741,7 +741,6 @@ private fun AssistantMemoryContent(
     )
 }
 
-@Composable
 /** Human label for a `MemoryKind` wire value; unknown kinds read as "note". */
 @Composable
 private fun memoryKindLabel(kind: String): String = stringResource(
@@ -796,6 +795,7 @@ private fun FactItem(
     }
 }
 
+@Composable
 private fun MemoryItem(
     memory: AssistantMemory,
     onEditMemory: (AssistantMemory) -> Unit,
