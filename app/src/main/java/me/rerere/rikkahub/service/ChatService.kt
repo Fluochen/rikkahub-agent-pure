@@ -1029,6 +1029,42 @@ class ChatService(
         }
     }
 
+    /**
+     * 批 H — 运行中插话（steer）。
+     *
+     * 区别对待「排队」和「插话」：
+     * - 普通聊天里，生成中发的消息进 [MessageQueue]，等这一轮结束再当作新回合处理——符合预期。
+     * - **任务在跑**时，用户往往是想纠正方向（“别用 A 方案了，改用 B”），等这一轮结束再说
+     *   就晚了：模型可能已经把错的方向做完了。这时把话通过 [ConversationInjections] 塞进
+     *   本轮的下一个模型请求（合成 user 消息，不落库、不渲染），模型下一步就能看到；
+     *   同时用 `answer = false` 把这条消息补进会话记录，保证用户自己也能在transcript里找到它，
+     *   而且不会再触发一次多余的生成。
+     *
+     * 只对任务会话生效：给普通聊天自动改成「插话」会让「排队等回复」这个既有语义消失。
+     *
+     * @return true = 已作为插话投递；false = 没有可插话的运行中任务，调用方应按普通发送处理。
+     */
+    fun steer(conversationId: Uuid, text: String): Boolean {
+        if (text.isBlank()) return false
+        val missionId = MissionSessions.missionIdFor(conversationId.toString()) ?: return false
+        val session = sessions[conversationId] ?: return false
+        if (!session.isGenerating) return false
+
+        ConversationInjections.push(
+            conversationId,
+            buildString {
+                appendLine("[用户插话 · 立即生效] 用户在你执行本轮任务的过程中补充了指令：")
+                appendLine(text.trim())
+                appendLine("从下一步开始按这个调整方向；已经完成且仍然有效的部分不要重做。")
+                appendLine("（这条指令已记录在会话里，本轮结束后仍然有效。）")
+            }.trimEnd(),
+        )
+        // 补进 transcript：answer = false 只落消息、不再起一轮生成。
+        sendMessage(conversationId, listOf(UIMessagePart.Text(text.trim())), answer = false)
+        Log.i(TAG, "steer: injected into mission $missionId")
+        return true
+    }
+
     /** Enqueue immediately; the result belongs to this item even after edits or later turns. */
     fun enqueueVoiceMessage(conversationId: Uuid, text: String): Deferred<String?> {
         val session = getOrCreateSession(conversationId)
