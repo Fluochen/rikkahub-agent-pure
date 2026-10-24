@@ -111,6 +111,86 @@ object AcceptanceCheckSpec {
             .take(MAX_CHECKS)
             .toList()
 
+    /**
+     * 编辑器语法：每行一条，`类型: 参数`。
+     *
+     * 之所以不用结构化表单：验收条件天然是「几条断言」，一行一条比一堆下拉框快得多，
+     * 而且用户可以直接从 README 里粘命令。语法刻意做得宽松（中文/英文类型名都认），
+     * 解析失败的行不会被静默丢弃，而是保留成 [AcceptanceKind.MANUAL]——写错了至少看得见。
+     *
+     * - `命令: pytest -q`
+     * - `文件: report.md`
+     * - `包含: report.md | 结论`   （path | 子串）
+     * - `不含: report.md | TODO`
+     * - `大小: report.md | 1024`
+     * - 其它任意文本 → 人工确认项
+     */
+    fun parseEditorLines(text: String): List<AcceptanceCheck> =
+        text.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .mapNotNull { line -> parseLine(line) }
+            .toList()
+
+    private fun parseLine(line: String): AcceptanceCheck? {
+        val colon = line.indexOfFirst { it == ':' || it == '：' }
+        if (colon <= 0) {
+            return AcceptanceCheck(text = line.take(MAX_TEXT_CHARS), kind = AcceptanceKind.MANUAL)
+        }
+        val rawType = line.substring(0, colon).trim().lowercase()
+        val arg = line.substring(colon + 1).trim()
+        if (arg.isEmpty()) return null
+        return when (rawType) {
+            "命令", "command", "cmd" -> AcceptanceCheck(
+                text = arg,
+                kind = AcceptanceKind.COMMAND,
+                target = arg,
+            )
+            "文件", "file", "exists" -> AcceptanceCheck(
+                text = arg,
+                kind = AcceptanceKind.FILE_EXISTS,
+                target = arg,
+            )
+            "包含", "contains" -> splitPair(arg)?.let { (path, needle) ->
+                AcceptanceCheck(text = "包含「$needle」", kind = AcceptanceKind.FILE_CONTAINS, path = path, target = needle)
+            }
+            "不含", "not_contains", "notcontains" -> splitPair(arg)?.let { (path, needle) ->
+                AcceptanceCheck(text = "不包含「$needle」", kind = AcceptanceKind.FILE_NOT_CONTAINS, path = path, target = needle)
+            }
+            "大小", "size", "min_bytes" -> splitPair(arg)?.let { (path, size) ->
+                AcceptanceCheck(
+                    text = "至少 $size 字节",
+                    kind = AcceptanceKind.MIN_BYTES,
+                    target = path,
+                    value = size.toLongOrNull(),
+                )
+            }
+            else -> AcceptanceCheck(text = line.take(MAX_TEXT_CHARS), kind = AcceptanceKind.MANUAL)
+        }
+    }
+
+    private fun splitPair(raw: String): Pair<String, String>? {
+        val parts = raw.split("|", "｜").map { it.trim() }
+        if (parts.size < 2) return null
+        val left = parts[0]
+        val right = parts.drop(1).joinToString("|").trim()
+        if (left.isEmpty() || right.isEmpty()) return null
+        return left to right
+    }
+
+    /** 反向：把已存的检查渲染回编辑器文本（保留用户能看懂的写法）。 */
+    fun toEditorLines(checks: List<AcceptanceCheck>): String =
+        checks.joinToString("\n") { check ->
+            when (check.kind) {
+                AcceptanceKind.COMMAND -> "命令: ${check.target}"
+                AcceptanceKind.FILE_EXISTS -> "文件: ${check.target}"
+                AcceptanceKind.FILE_CONTAINS -> "包含: ${check.path} | ${check.target}"
+                AcceptanceKind.FILE_NOT_CONTAINS -> "不含: ${check.path} | ${check.target}"
+                AcceptanceKind.MIN_BYTES -> "大小: ${check.target} | ${check.value ?: 0}"
+                AcceptanceKind.MANUAL -> check.text
+            }
+        }
+
     /** 给提示词用：告诉模型完成时会被逐条检查什么。 */
     fun composePromptBlock(checks: List<AcceptanceCheck>): String {
         val runnable = checks.filter { it.text.isNotBlank() }

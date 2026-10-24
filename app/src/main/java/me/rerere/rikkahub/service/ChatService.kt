@@ -182,6 +182,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.uuid.Uuid
 import me.rerere.rikkahub.runtime.usage.UsageCallContext
+import me.rerere.rikkahub.runtime.tools.ConversationInjections
+import me.rerere.rikkahub.service.mission.MissionSessions
 import me.rerere.rikkahub.runtime.usage.UsagePurpose
 
 private const val TAG = "ChatService"

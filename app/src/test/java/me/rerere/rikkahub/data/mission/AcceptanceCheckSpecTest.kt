@@ -90,6 +90,49 @@ class AcceptanceCheckSpecTest {
     }
 
     @Test
+    fun `editor lines parse into typed checks`() {
+        val checks = AcceptanceCheckSpec.parseEditorLines(
+            """
+            命令: pytest -q
+            文件: report.md
+            包含: report.md | 结论
+            不含: report.md | TODO
+            大小: report.md | 1024
+            语气自然
+            # 注释行
+            """.trimIndent()
+        )
+        assertEquals(6, checks.size)
+        assertEquals(AcceptanceKind.COMMAND, checks[0].kind)
+        assertEquals("pytest -q", checks[0].target)
+        assertEquals(AcceptanceKind.FILE_CONTAINS, checks[2].kind)
+        assertEquals("report.md", checks[2].path)
+        assertEquals("结论", checks[2].target)
+        assertEquals(AcceptanceKind.FILE_NOT_CONTAINS, checks[3].kind)
+        assertEquals(AcceptanceKind.MIN_BYTES, checks[4].kind)
+        assertEquals(1024L, checks[4].value)
+        assertEquals("写错的普通文本至少留成人工项", AcceptanceKind.MANUAL, checks[5].kind)
+    }
+
+    @Test
+    fun `editor round-trips without losing the judgement method`() {
+        val original = listOf(
+            AcceptanceCheck(text = "测试", kind = AcceptanceKind.COMMAND, target = "pytest -q"),
+            AcceptanceCheck(text = "有报告", kind = AcceptanceKind.FILE_EXISTS, target = "report.md"),
+            AcceptanceCheck(text = "含结论", kind = AcceptanceKind.FILE_CONTAINS, path = "report.md", target = "结论"),
+            AcceptanceCheck(text = "大小", kind = AcceptanceKind.MIN_BYTES, target = "report.md", value = 2048L),
+        )
+        val reparsed = AcceptanceCheckSpec.parseEditorLines(AcceptanceCheckSpec.toEditorLines(original))
+        assertEquals(original.size, reparsed.size)
+        original.zip(reparsed).forEach { (a, b) ->
+            assertEquals(a.kind, b.kind)
+            assertEquals(a.target, b.target)
+            assertEquals(a.path, b.path)
+            assertEquals(a.value, b.value)
+        }
+    }
+
+    @Test
     fun `describe includes the target for humans`() {
         val check = AcceptanceCheck(
             text = "有总结",
