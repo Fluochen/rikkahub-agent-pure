@@ -46,10 +46,12 @@ import me.rerere.ai.util.HttpException
 import me.rerere.ai.util.redactSecrets
 import me.rerere.rikkahub.runtime.limits.ConversationReasoningOverrides
 import me.rerere.rikkahub.runtime.limits.ToolRuntimeLimits
+import me.rerere.rikkahub.runtime.tools.ContentRouter
 import me.rerere.rikkahub.runtime.tools.ConversationInjections
 import me.rerere.rikkahub.runtime.tools.ToolExecutionRetryPolicy
+import me.rerere.rikkahub.runtime.tools.ToolResultBudget
 import me.rerere.rikkahub.runtime.tools.buildMemoryTools
-import me.rerere.rikkahub.runtime.tools.truncateToolResult
+import me.rerere.rikkahub.runtime.tools.buildTruncationNotice
 import me.rerere.rikkahub.runtime.usage.UsageCallContext
 import me.rerere.rikkahub.runtime.usage.UsagePurpose
 import me.rerere.rikkahub.runtime.usage.UsageRunContexts
@@ -1105,9 +1107,11 @@ class GenerationLoop(
                             executedTools += markedTool.copy(
                                 output = maybeTruncateToolOutput(
                                     toolCallId = tool.toolCallId,
+                                    toolName = tool.toolName,
                                     output = result,
                                     hasShellAccess = hasShellAccess,
                                     maxTokens = assistant.toolResultMaxTokens,
+                                    contextLength = model.contextLength,
                                 )
                             )
                             onToolExecuted?.let { hook ->
@@ -1301,7 +1305,12 @@ class GenerationLoop(
             // upstream's isSynthetic marker (keeps this built-up system prompt out of
             // TemplateTransformer) and its stepped truncation (which now preserves
             // prompt caching instead of trimming one message at a time).
-            addAll(messages.limitContext(assistant.contextMessageLimit).ageOldToolImages())
+            // A compacted view is [summary] + rawTail, and the summary is the only record of
+            // everything before the tail. The positional limit must not be able to drop it.
+            addAll(
+                messages.limitContextPreservingLeadingSynthetic(assistant.contextMessageLimit)
+                    .ageOldToolImages()
+            )
             // Cross-model continuation: when the previous model's generation failed
             // mid-stream and routing switched to this model, append a synthetic user
             // instruction so the new model continues from the partial assistant text
@@ -1682,97 +1691,85 @@ class GenerationLoop(
         }
     }
 
+    /**
+     * Bounds one tool result to its share of the model window.
+     *
+     * The gate no longer depends on a workspace shell existing. Waiting for a shell meant that
+     * the conversations least able to recover a lost result — no shell, no `cat` — were the
+     * ones that had none of their results bounded. The budget is derived from the window
+     * instead (see [ToolResultBudget]) and the way back is [me.rerere.rikkahub.runtime.tools.buildToolOutputReadTool],
+     * which every surface gets.
+     *
+     * Fail-open rule: the result is only cut once the full text is safely on disk. A spill
+     * failure means the model keeps the whole result, because an over-budget request can still
+     * be retried or compacted, while a result nobody stored is simply gone.
+     */
     private fun maybeTruncateToolOutput(
         toolCallId: String,
+        toolName: String,
         output: List<UIMessagePart>,
         hasShellAccess: Boolean,
-        maxTokens: Int? = null,
+        maxTokens: Int?,
+        contextLength: Int?,
     ): List<UIMessagePart> {
         val textParts = output.filterIsInstance<UIMessagePart.Text>()
         val nonTextParts = output.filter { it !is UIMessagePart.Text }
+        if (textParts.isEmpty()) return output
         val totalChars = textParts.sumOf { it.text.length }
+        val fullText = textParts.joinToString("\n") { it.text }
 
-        // Phase 17 (⑥): optional per-tool-result token budget. Off by default (null = the
-        // char-based gate below, i.e. upstream behaviour untouched). When it IS set it can only
-        // ever tighten that gate, never loosen it: output that fits the token budget still has
-        // to clear the character gate.
-        if (maxTokens != null) {
-            val fullText = textParts.joinToString("\n") { it.text }
-            val outcome = truncateToolResult(text = fullText, maxTokens = maxTokens)
-            if (outcome.truncated) {
-                Log.i(
-                    TAG,
-                    "maybeTruncateToolOutput: tool $toolCallId trimmed to the ${maxTokens}-token budget " +
-                        "(${outcome.originalTokens} -> ${outcome.resultTokens} tokens, " +
-                        "${outcome.elidedChars} chars elided)"
+        val budget = ToolResultBudget.resolve(maxTokens, contextLength)
+        if (budget == null) {
+            // Explicitly opted out of the token budget: keep the legacy character gate, which
+            // still bounds the result when a shell exists to read the spill back.
+            if (totalChars <= MAX_TOOL_OUTPUT_CHARS || !hasShellAccess) return output
+            val preview = fullText.take(TOOL_OUTPUT_PREVIEW_CHARS)
+            val fileName = host.spillToolOutput(toolCallId, fullText)
+            return listOf(
+                UIMessagePart.Text(
+                    buildString {
+                        appendLine("[Tool output truncated: $totalChars characters total]")
+                        if (fileName != null) {
+                            appendLine("Full output saved to: /tool_outputs/$fileName")
+                            appendLine("Use shell to read: `cat /tool_outputs/$fileName`")
+                            appendLine("Use shell to search: `grep \"pattern\" /tool_outputs/$fileName`")
+                            appendLine()
+                        }
+                        append(preview)
+                    }
                 )
-                val fileName = host.spillToolOutput(toolCallId, fullText)
-                return listOf(
-                    UIMessagePart.Text(
-                        buildBudgetedTruncationNotice(
-                            totalChars = totalChars,
-                            fileName = fileName,
-                            showShellHints = hasShellAccess,
-                            budgetTokens = maxTokens,
-                            body = outcome.text,
-                        )
-                    )
-                ) + nonTextParts
-            }
+            ) + nonTextParts
         }
 
-        if (totalChars <= MAX_TOOL_OUTPUT_CHARS || !hasShellAccess) return output
-
-        Log.i(TAG, "maybeTruncateToolOutput: truncating tool $toolCallId output ($totalChars chars)")
-
-        val fullText = textParts.joinToString("\n") { it.text }
-        val preview = fullText.take(TOOL_OUTPUT_PREVIEW_CHARS)
+        val kind = ContentRouter.classify(toolName, fullText)
+        val routed = ContentRouter.compress(fullText, kind, budget)
+        if (!routed.truncated) return output
 
         val fileName = host.spillToolOutput(toolCallId, fullText)
+        if (fileName == null) {
+            Log.w(TAG, "maybeTruncateToolOutput: spill failed for $toolCallId, keeping the full result")
+            return output
+        }
 
+        Log.i(
+            TAG,
+            "maybeTruncateToolOutput: $toolCallId kind=$kind ${routed.originalTokens} -> " +
+                "${routed.resultTokens} tokens (budget=$budget, ${routed.elidedChars} chars elided)",
+        )
         return listOf(
             UIMessagePart.Text(
-                buildString {
-                    appendLine("[Tool output truncated: $totalChars characters total]")
-                    if (fileName != null) {
-                        appendLine("Full output saved to: /tool_outputs/$fileName")
-                        appendLine("Use shell to read: `cat /tool_outputs/$fileName`")
-                        appendLine("Use shell to search: `grep \"pattern\" /tool_outputs/$fileName`")
-                        appendLine()
-                    }
-                    append(preview)
-                }
+                buildTruncationNotice(
+                    kind = kind,
+                    originalTokens = routed.originalTokens,
+                    resultTokens = routed.resultTokens,
+                    totalChars = totalChars,
+                    fileName = fileName,
+                    hasShellAccess = hasShellAccess,
+                    body = routed.text,
+                )
             )
         ) + nonTextParts
     }
-
-    /**
-     * Header for a budget-trimmed tool result. The `cat`/`grep` hints are only advertised when a
-     * workspace shell is actually on the table this turn — pointing the model at a path it cannot
-     * read is worse than saying nothing.
-     */
-    private fun buildBudgetedTruncationNotice(
-        totalChars: Int,
-        fileName: String?,
-        showShellHints: Boolean,
-        budgetTokens: Int,
-        body: String,
-    ): String = buildString {
-        appendLine("[Tool output truncated to fit the ${budgetTokens}-token per-result budget]")
-        appendLine("[Original size: $totalChars characters]")
-        if (fileName != null) {
-            appendLine("Full output saved to: /tool_outputs/$fileName")
-            if (showShellHints) {
-                appendLine("Use shell to read: `cat /tool_outputs/$fileName`")
-                appendLine("Use shell to search: `grep \"pattern\" /tool_outputs/$fileName`")
-            }
-        } else {
-            appendLine("Full output could not be saved to disk; the trimmed text below is all that remains.")
-        }
-        appendLine()
-        append(body)
-    }
-
 }
 
 // ---------------------------------------------------------------------------

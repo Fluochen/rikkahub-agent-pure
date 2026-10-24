@@ -85,10 +85,14 @@ data class Assistant(
     val fastPathRouterEnabled: Boolean = false,
     val allowConversationSystemPrompt: Boolean = false, // 允许对话单独重写 system prompt
     val allowConversationPromptInjection: Boolean = false, // 允许对话单独绑定提示词注入
-    // Phase 17 (⑥) — Optional per-tool-result token budget. null = upstream behaviour unchanged
-    // (the fixed 32 KB character gate in GenerationLoop.maybeTruncateToolOutput). When set,
-    // oversized tool results are trimmed to roughly this many tokens keeping head + tail, and
-    // the full text is still spilled to /tool_outputs/ for on-demand re-reading.
+    // Phase 17 (⑥) — per-tool-result token budget. `null` means "size it from the model
+    // window" (one twentieth of the window, clamped to 400..2000 tokens — see
+    // ToolResultBudget), which is now the default behaviour rather than an opt-in: the gate
+    // no longer waits for a workspace shell to exist, because a conversation without a shell
+    // is the one that cannot recover a lost result. A value of 0 or less restores the legacy
+    // 32 KB character gate (head-only preview, shell required). Over-budget results are cut
+    // by shape (ContentRouter) and the full text is spilled to /tool_outputs/ where
+    // `tool_output_read` can page it back.
     // Appended last on purpose: a new field may never shift the position of an existing one.
     val toolResultMaxTokens: Int? = null,
     // Phase 17 (②) — Model-initiated context compaction. Off by default. When ON, this

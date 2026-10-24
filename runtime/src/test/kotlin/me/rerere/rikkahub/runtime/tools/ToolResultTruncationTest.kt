@@ -1,6 +1,5 @@
 package me.rerere.rikkahub.runtime.tools
 
-import me.rerere.rikkahub.runtime.ContextCompactionPlanner
 import me.rerere.rikkahub.runtime.tools.truncateToolResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,7 +18,7 @@ class ToolResultTruncationTest {
 
         assertFalse(outcome.truncated)
         assertEquals(text, outcome.text)
-        assertEquals(ContextCompactionPlanner.estimateTokens(text), outcome.originalTokens)
+        assertEquals(TokenEstimator.estimate(text), outcome.originalTokens)
     }
 
     @Test

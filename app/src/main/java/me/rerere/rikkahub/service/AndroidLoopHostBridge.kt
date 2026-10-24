@@ -86,7 +86,10 @@ class AndroidLoopHostBridge(
     }
 
     override fun spillToolOutput(toolCallId: String, fullText: String): String? = runCatching {
-        val fileName = "$toolCallId.txt"
+        // The name comes from a model-supplied call id, so it goes through the same rule the
+        // read tool uses — otherwise a hostile id (`../shared_prefs/x`) would write outside
+        // this directory, and the reader could never address what the writer produced.
+        val fileName = me.rerere.rikkahub.runtime.tools.ToolOutputRules.fileNameFor(toolCallId)
         val outputDir = File(context.filesDir, FileFolders.TOOL_OUTPUTS).apply { mkdirs() }
         File(outputDir, fileName).writeText(fullText)
         fileName
