@@ -76,6 +76,10 @@ class MemoryFactRepository(
         return FactInjection(facts = live, omitted = (total - live.size).coerceAtLeast(0))
     }
 
+    /** Every live fact, for `memory_lookup`. */
+    suspend fun liveFacts(assistantId: String): List<MemoryFactEntity> =
+        dao.getAllLiveFacts(assistantId)
+
     /** Live facts for the memory page. Read-only: the page does not edit triples. */
     fun liveFactsFlow(assistantId: String): kotlinx.coroutines.flow.Flow<List<MemoryFactEntity>> =
         dao.getLiveFactsFlow(assistantId)

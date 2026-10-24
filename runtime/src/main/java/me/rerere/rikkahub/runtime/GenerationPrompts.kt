@@ -31,8 +31,8 @@ internal fun buildMemoryPrompt(memories: List<LoopMemory>, omitted: Int = 0) =
         append(JsonInstantPretty.encodeToString(json))
         appendLine()
         if (omitted > 0) {
-            append("($omitted more memories are stored but are not listed above. They are not visible ")
-            append("in this turn; if a detail is missing, say so instead of assuming it was never told.)")
+            append("($omitted more memories are stored but are not listed above. Call memory_lookup ")
+            append("to search them; if that finds nothing, say so instead of assuming it was never told.)")
             appendLine()
         }
     }
@@ -67,7 +67,7 @@ internal fun buildFactsPrompt(facts: List<LoopFact>, omitted: Int = 0) =
         append(json.toString())
         appendLine()
         if (omitted > 0) {
-            append("($omitted more facts are stored but not listed. Do not claim they do not exist.)")
+            append("($omitted more facts are stored but not listed. Call memory_lookup to search them.)")
             appendLine()
         }
     }
