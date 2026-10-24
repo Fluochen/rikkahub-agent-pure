@@ -78,7 +78,9 @@ import me.rerere.rikkahub.data.ai.tools.AppPlaybookFile
 import me.rerere.rikkahub.data.ai.tools.AppPlaybookRules
 import me.rerere.rikkahub.runtime.GenerationChunk
 import me.rerere.rikkahub.runtime.GenerationLoop
+import me.rerere.rikkahub.runtime.LoopFact
 import me.rerere.rikkahub.data.ai.ModelRouter
+import me.rerere.rikkahub.data.ai.FactExtractor
 import me.rerere.rikkahub.runtime.ContextBudgetPlanner
 import me.rerere.rikkahub.runtime.ContextCompactionPlanner
 import me.rerere.rikkahub.data.ai.ContextCompactionPresentation
@@ -160,6 +162,8 @@ import me.rerere.rikkahub.data.model.toMessageNode
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FolderRepository
 import me.rerere.rikkahub.data.repository.MemoryInjection
+import me.rerere.rikkahub.data.repository.FactInjection
+import me.rerere.rikkahub.data.repository.MemoryFactRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.workspace.WorkspaceShellStatus
@@ -180,6 +184,9 @@ import me.rerere.rikkahub.runtime.usage.UsagePurpose
 private const val TAG = "ChatService"
 private const val COMPACTION_REQUEST_TIMEOUT_MS = 3 * 60_000L
 private const val COMPACTION_TOTAL_TIMEOUT_MS = 8 * 60_000L
+
+/** Fact extraction runs after the compaction is stored; this only bounds a hung provider. */
+private const val FACT_EXTRACTION_TIMEOUT_MS = 3 * 60_000L
 private const val COMPACTION_MAX_REQUEST_OUTPUT_TOKENS = 16_384
 private const val MAX_PARALLEL_COMPACTION_REQUESTS = 4
 private const val MAX_FULL_CONTEXT_MAP_GROUPS = 8
@@ -475,6 +482,8 @@ class ChatService(
     private val settingsStore: SettingsStore,
     private val conversationRepo: ConversationRepository,
     private val memoryRepository: MemoryRepository,
+    private val factRepository: MemoryFactRepository,
+    private val factExtractor: FactExtractor,
     private val generationLoop: GenerationLoop,
     private val translationHandler: TranslationHandler,
     private val templateTransformer: TemplateTransformer,
@@ -1944,6 +1953,15 @@ class ChatService(
                 Log.w(TAG, "memory injection failed; sending no memories this turn", error)
                 MemoryInjection(emptyList(), omitted = 0)
             }
+            // The fact block is a separate, much smaller store than hot memory: triples that a
+            // later pass could verify, with the history of what they superseded. Same failure
+            // policy as memory — an empty block, never a failed turn.
+            val factInjection = runCatching {
+                factRepository.injectable(assistant.id.toString())
+            }.getOrElse { error ->
+                Log.w(TAG, "fact injection failed; sending no facts this turn", error)
+                FactInjection(emptyList(), omitted = 0)
+            }
             generationLoop.generateText(
                 settings = settings.toLoopSettings(),
                 model = model,
@@ -2053,6 +2071,10 @@ class ChatService(
                 workspaceCwd = conversation.workspaceCwd,
                 memories = memoryInjection.memories.map { it.toLoopMemory() },
                 memoriesOmitted = memoryInjection.omitted,
+                facts = factInjection.facts.map { fact ->
+                    LoopFact(fact.subject, fact.predicate, fact.objectValue)
+                },
+                factsOmitted = factInjection.omitted,
                 // P4 — transformers stay :app. The loop receives four closures over this
                 // turn's TransformerContext instead of the transformer objects themselves.
                 inputTransform = { msgs ->
@@ -3574,7 +3596,102 @@ class ChatService(
         )
     }
 
+    /**
+     * Compacts the conversation, then — off the critical path — turns that summary into durable
+     * facts.
+     *
+     * The two are deliberately not one operation: the compaction is what the turn is waiting
+     * for, while extraction is an enrichment that may take another minute, may fail, and may
+     * legitimately find nothing. Coupling them would make every compaction as slow as its
+     * weakest background call.
+     */
     private suspend fun generateAndStoreCompaction(
+        conversation: Conversation,
+        settings: Settings,
+        messagesToCompress: List<UIMessage>,
+        rawTailStartIndex: Int,
+        additionalPrompt: String,
+        targetTokens: Int,
+        isAuto: Boolean,
+    ): ConversationCompaction {
+        val compaction = summarizeAndStore(
+            conversation = conversation,
+            settings = settings,
+            messagesToCompress = messagesToCompress,
+            rawTailStartIndex = rawTailStartIndex,
+            additionalPrompt = additionalPrompt,
+            targetTokens = targetTokens,
+            isAuto = isAuto,
+        )
+        scheduleFactExtraction(compaction)
+        return compaction
+    }
+
+    /**
+     * Extracts facts from a freshly stored summary in the app scope, and forgets about it.
+     *
+     * Facts are scoped to the assistant that owns the conversation. Global memory stays the
+     * assistant-agnostic bank it has always been, because a fact describes the work (a service,
+     * a project, a machine) rather than the persona that happened to be selected for the turn.
+     */
+    private fun scheduleFactExtraction(compaction: ConversationCompaction) {
+        val assistantId = runCatching {
+            getConversationFlow(compaction.conversationId).value.assistantId.toString()
+        }.getOrNull() ?: return
+        appScope.launch {
+            runCatching {
+                factExtractor.extract(
+                    assistantId = assistantId,
+                    sourceConversationId = compaction.conversationId.toString(),
+                    summary = compaction.summary,
+                    generate = { prompt ->
+                        generateFactExtractionText(prompt, compaction.conversationId)
+                    },
+                )
+            }.onSuccess { written ->
+                if (written > 0) Log.i(TAG, "fact extraction stored $written fact(s)")
+            }.onFailure { error ->
+                Log.w(TAG, "fact extraction failed; the compaction is unaffected", error)
+            }
+        }
+    }
+
+    /**
+     * One bounded, accounted model call for extraction, reusing the compression model.
+     *
+     * The same `resolveCompressionModel` the summariser uses: extraction is the same class of
+     * background work, so a user who picked a cheap model for compaction has already said what
+     * they want to pay for this.
+     */
+    private suspend fun generateFactExtractionText(
+        prompt: String,
+        conversationId: Uuid,
+    ): String {
+        val settings = settingsStore.settingsFlow.first()
+        val model = resolveCompressionModel(settings)
+            ?: error("no enabled provider is available for fact extraction")
+        val provider = model.findProvider(settings.providers)
+            ?: error("provider not found")
+        check(provider.enabled) { "provider '${provider.name}' is disabled" }
+        val handler = providerManager.getProviderByType(provider)
+        return withTimeout(FACT_EXTRACTION_TIMEOUT_MS) {
+            withContext(
+                UsageCallContext(
+                    purpose = UsagePurpose.MEMORY_EXTRACT,
+                    conversationId = conversationId.toString(),
+                )
+            ) {
+                handler.generateText(
+                    providerSetting = provider,
+                    messages = listOf(UIMessage.user(prompt)),
+                    params = backgroundTextGenerationParams(model, conversationId)
+                        .copy(maxTokens = 800),
+                ).message.toText()
+            }
+        }
+    }
+
+    private suspend fun summarizeAndStore(
         conversation: Conversation,
         settings: Settings,
         messagesToCompress: List<UIMessage>,

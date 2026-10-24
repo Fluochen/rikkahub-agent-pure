@@ -61,8 +61,8 @@ object ImportedDatabaseReconciler {
      * newer *shared* conversation columns were added) or this reconciliation will silently stop
      * matching. `internal` so a JVM test can assert these stay in sync with the schema export.
      */
-    internal const val EXPECTED_VERSION = 38
-    internal const val EXPECTED_IDENTITY_HASH = "93bb8febe883b13618060f15f07cf7f3"
+    internal const val EXPECTED_VERSION = 39
+    internal const val EXPECTED_IDENTITY_HASH = "20763c65de6b15d789126bb0f05cde41"
 
     /**
      * Columns that a restored file must already have for its shared schema to be considered
@@ -184,6 +184,12 @@ object ImportedDatabaseReconciler {
         "CREATE TABLE IF NOT EXISTS `run_checkpoints` (`run_id` TEXT NOT NULL, `conversation_id` TEXT, `mission_id` TEXT, `kind` TEXT NOT NULL, `phase` TEXT NOT NULL, `step_index` INTEGER NOT NULL, `message_count` INTEGER NOT NULL, `pending_tools` TEXT, `attempts` INTEGER NOT NULL, `updated_at_ms` INTEGER NOT NULL, PRIMARY KEY(`run_id`))",
         "CREATE INDEX IF NOT EXISTS `index_run_checkpoints_conversation_id` ON `run_checkpoints` (`conversation_id`)",
         "CREATE INDEX IF NOT EXISTS `index_run_checkpoints_updated_at_ms` ON `run_checkpoints` (`updated_at_ms`)",
+        // v39 (上下文压缩 B 批): durable facts extracted from conversation summaries. Fork-only
+        // like missions/run_events, so a restored backup needs it pre-created; every statement is
+        // idempotent. Index names and column order mirror what Room generates for the entity.
+        "CREATE TABLE IF NOT EXISTS `memory_fact` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `assistant_id` TEXT NOT NULL, `subject` TEXT NOT NULL, `predicate` TEXT NOT NULL, `object_value` TEXT NOT NULL, `confidence` REAL NOT NULL, `source_conversation_id` TEXT, `valid_from` INTEGER NOT NULL, `valid_to` INTEGER, `created_at` INTEGER NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS `index_memory_fact_assistant_id_valid_to` ON `memory_fact` (`assistant_id`, `valid_to`)",
+        "CREATE INDEX IF NOT EXISTS `index_memory_fact_assistant_id_subject_predicate` ON `memory_fact` (`assistant_id`, `subject`, `predicate`)",
     )
 
     /**
