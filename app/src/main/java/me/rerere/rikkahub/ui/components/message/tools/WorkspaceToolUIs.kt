@@ -244,7 +244,8 @@ object WriteFileToolUI : ToolUIRenderer {
                 DiffView(
                     diff = diff,
                     modifier = Modifier.fillMaxWidth(),
-                    maxLines = SUMMARY_MAX_LINES,
+                    // 文件级常量，与「文件内容摘要」共用同一个行数上限。
+                    maxLines = FILE_SUMMARY_MAX_LINES,
                     showFileHeader = false,
                 )
             }

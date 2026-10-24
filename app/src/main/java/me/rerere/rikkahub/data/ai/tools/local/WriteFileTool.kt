@@ -12,6 +12,7 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.DiffMetadata
+import me.rerere.ai.ui.toMetadata
 import me.rerere.ai.ui.UIMessagePart
 import java.io.File
 import me.rerere.rikkahub.utils.generateUnifiedDiff
