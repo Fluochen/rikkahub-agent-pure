@@ -48,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -55,6 +56,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -110,7 +112,10 @@ import me.rerere.rikkahub.subagent.SubAgentRegistry
 import me.rerere.rikkahub.subagent.SubAgentRun
 import me.rerere.rikkahub.subagent.SubAgentStatus
 import me.rerere.rikkahub.utils.base64Decode
+import me.rerere.rikkahub.utils.classifyChatAttachment
+import me.rerere.rikkahub.utils.guessMimeFromFileName
 import me.rerere.rikkahub.utils.navigateToChatPage
+import me.rerere.rikkahub.utils.toMessagePart
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
@@ -196,19 +201,41 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     // 初始化输入状态（处理传入的 files 和 text 参数）
     LaunchedEffect(files, text) {
         if (files.isNotEmpty()) {
+            // Pair each source URI with its copied local file. createChatFilesByContents may
+            // skip failures, so zip by successful copies in order rather than assuming 1:1.
             val localFiles = filesManager.createChatFilesByContents(files)
-            val contentTypes = files.mapNotNull { file ->
-                filesManager.getFileMimeType(file)
-            }
             val parts = buildList {
-                localFiles.forEachIndexed { index, file ->
-                    val type = contentTypes.getOrNull(index)
-                    if (type?.startsWith("image/") == true) {
-                        add(UIMessagePart.Image(url = file.toString()))
-                    } else if (type?.startsWith("video/") == true) {
-                        add(UIMessagePart.Video(url = file.toString()))
-                    } else if (type?.startsWith("audio/") == true) {
-                        add(UIMessagePart.Audio(url = file.toString()))
+                // Best-effort: walk sources and locals in parallel when counts match; otherwise
+                // classify each local file from its on-disk name.
+                if (localFiles.size == files.size) {
+                    localFiles.forEachIndexed { index, local ->
+                        val source = files[index]
+                        val fileName = filesManager.getFileNameFromUri(source)
+                            ?: local.lastPathSegment
+                            ?: "file"
+                        val mime = filesManager.getFileMimeType(source)
+                            ?: guessMimeFromFileName(fileName)
+                            ?: "application/octet-stream"
+                        add(
+                            classifyChatAttachment(fileName, mime).toMessagePart(
+                                localUri = local.toString(),
+                                fileName = fileName,
+                                mime = mime,
+                            )
+                        )
+                    }
+                } else {
+                    localFiles.forEach { local ->
+                        val fileName = local.lastPathSegment ?: "file"
+                        val mime = guessMimeFromFileName(fileName)
+                            ?: "application/octet-stream"
+                        add(
+                            classifyChatAttachment(fileName, mime).toMessagePart(
+                                localUri = local.toString(),
+                                fileName = fileName,
+                                mime = mime,
+                            )
+                        )
                     }
                 }
             }
@@ -925,14 +952,18 @@ private fun TopBar(
                                 TokenBudgetTracker.aggregate(conversation).totalTokens
                             }
                         }
-                        Text(
-                            text = "${assistant.name.ifBlank { stringResource(R.string.assistant_page_default_assistant) }} / ${model.displayName} / $usedTokens token",
-                            overflow = TextOverflow.Ellipsis,
-                            maxLines = 1,
+                        // One Text ellipsizes from the end, so a long assistant or model name
+                        // clips the count ("0 t..."). Same split as CleanTopBar: only the name may
+                        // ellipsize. Custom measure, not weight, so the frosted pill still hugs the
+                        // text instead of stretching to the title slot.
+                        TopBarSubtitleLine(
+                            assistantName = assistant.name.ifBlank { stringResource(R.string.assistant_page_default_assistant) },
+                            modelName = model.displayName,
+                            usedTokens = usedTokens,
                             color = LocalContentColor.current.copy(0.65f),
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontSize = 8.sp,
-                            )
+                            ),
                         )
                     }
                 }
@@ -999,6 +1030,68 @@ private fun GlassTopBarButton(
             contentAlignment = Alignment.Center,
         ) {
             content()
+        }
+    }
+}
+
+/**
+ * Regular-bar subtitle: "assistant / model" plus " / N tokens".
+ *
+ * A single [Text] with [TextOverflow.Ellipsis] clips the end, so a long assistant or model
+ * name turns the count into "0 t...". The token suffix is measured first and always placed;
+ * only the name gets the remaining width. The layout reports the sum of the two, not the
+ * incoming max width, so the frosted title pill keeps hugging the text. A weighted
+ * Row would stretch that pill to the title slot.
+ */
+@Composable
+private fun TopBarSubtitleLine(
+    assistantName: String,
+    modelName: String,
+    usedTokens: Long,
+    color: Color,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+) {
+    Layout(
+        modifier = modifier,
+        content = {
+            Text(
+                text = topBarSubtitleName(assistantName, modelName),
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+                color = color,
+                style = style,
+            )
+            Text(
+                text = topBarTokenSuffix(usedTokens),
+                maxLines = 1,
+                softWrap = false,
+                // Last resort only: the suffix is given the full width first, so this clips
+                // solely when " / N tokens" itself is wider than the title slot.
+                overflow = TextOverflow.Ellipsis,
+                color = color,
+                style = style,
+            )
+        },
+    ) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val token = measurables[1].measure(loose.copy(maxWidth = constraints.maxWidth))
+        val nameMax = if (constraints.hasBoundedWidth) {
+            (constraints.maxWidth - token.width).coerceAtLeast(0)
+        } else {
+            constraints.maxWidth
+        }
+        val name = measurables[0].measure(loose.copy(maxWidth = nameMax))
+        val width = (name.width + token.width).coerceAtLeast(constraints.minWidth).let { raw ->
+            if (constraints.hasBoundedWidth) raw.coerceAtMost(constraints.maxWidth) else raw
+        }
+        val height = maxOf(name.height, token.height).coerceAtLeast(constraints.minHeight).let { raw ->
+            if (constraints.hasBoundedHeight) raw.coerceAtMost(constraints.maxHeight) else raw
+        }
+        layout(width, height) {
+            name.placeRelative(0, (height - name.height) / 2)
+            token.placeRelative(name.width, (height - token.height) / 2)
         }
     }
 }

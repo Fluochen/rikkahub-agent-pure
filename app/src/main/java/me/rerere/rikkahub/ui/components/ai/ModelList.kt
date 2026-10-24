@@ -27,6 +27,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -775,6 +776,18 @@ private fun ModelItem(
                         ModelModalityTag(model = model)
 
                         ModelAbilityTag(model = model)
+
+                        // 提供商跟在标签流末尾：随标签自动换行，不会和模型名抢同一行被截断
+                        if (providerSetting.name.isNotBlank()) {
+                            Text(
+                                text = "· ${providerSetting.name}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = LocalContentColor.current.copy(alpha = 0.6f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.align(Alignment.CenterVertically),
+                            )
+                        }
                     }
                 }
                 tail()
