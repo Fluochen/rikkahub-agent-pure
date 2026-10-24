@@ -383,13 +383,17 @@ class MissionSupervisor(
                 return@runCatching
             }
 
+            // 批 H — 设了截止时间的任务，真正的约束是时间而不是轮数。
+            // 默认 maxResumeRounds=5 在 30 分钟一轮下只有三个小时，和「跑到 8 小时」直接矛盾；
+            // 有了 deadline + 收尾轮 + token 预算三道闸之后，轮数不必再当第二把锁。
+            val deadlineBounded = mission.limits.deadlineAt != null
             val input = ContinueInput(
                 missionStatus = mission.status,
                 hasDoneSignal = hasDoneSignal,
                 hasBlockedSignal = hasBlockedSignal,
                 resumeCount = mission.resumeCount,
                 stallRounds = stallRounds,
-                maxResumeRounds = mission.limits.maxResumeRounds,
+                maxResumeRounds = if (deadlineBounded) Int.MAX_VALUE else mission.limits.maxResumeRounds,
                 stallThreshold = mission.limits.stallRounds,
                 // Token breaker: cumulative usage of the execution conversation. Wired
                 // through the usage ledger (see tokenProbe); 0 when unavailable.

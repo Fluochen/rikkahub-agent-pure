@@ -261,6 +261,30 @@ class MissionSupervisorAcceptanceTest {
     }
 
     @Test
+    fun `a live deadline lifts the round cap so time is the real bound`() = runBlocking {
+        val fx = Fixture()
+        try {
+            // expire 在两小时内，resumeCount 已到默认上限 5 轮。
+            fx.missionDao.upsert(
+                mission(
+                    MissionLimits(
+                        maxResumeRounds = 2,
+                        deadlineAt = NOW + 120 * 60_000L,
+                    )
+                ).copy(resumeCount = 5)
+            )
+            fx.statuses["r1"] = "succeeded"
+            fx.signal("r1", "m1", "launch", "{}")
+
+            fx.supervisor.handleRunFinished(fx.finished("r1", "m1"))
+
+            assertEquals("有截止时间时不该被轮数熔断", 1, fx.runService.submitted.size)
+        } finally {
+            fx.cleanup()
+        }
+    }
+
+    @Test
     fun `an expired deadline parks the mission instead of resuming`() = runBlocking {
         val fx = Fixture()
         try {
