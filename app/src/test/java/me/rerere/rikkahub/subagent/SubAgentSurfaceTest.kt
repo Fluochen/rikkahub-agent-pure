@@ -102,11 +102,28 @@ class SubAgentSurfaceTest {
             modelId = Uuid.random().toString(),
         )
         assertFalse(SubAgentSurface.hasOwnSurface(plain))
-        assertNull(SubAgentSurface.resolveChildAssistant(parent(), plain))
+        // G 批 — but the parent HAS skills, so the child is still derived: the only thing it
+        // changes is dropping them (an expert that declares no skills gets none).
+        val child = SubAgentSurface.resolveChildAssistant(parent(), plain)
+        assertNotNull(child)
+        assertTrue(child!!.enabledSkills.isEmpty())
+        // With nothing to strip there is no difference, so it stays "inherit verbatim".
+        assertNull(
+            SubAgentSurface.resolveChildAssistant(parent().copy(enabledSkills = emptySet()), plain),
+        )
     }
 
     @Test
-    fun `an own local tool list replaces the parent's and leaves every other field inherited`() {
+    fun `declared skills replace the parent's instead of adding to them`() {
+        val child = SubAgentSurface.resolveChildAssistant(
+            parent(),
+            definition(skills = setOf("only-this")),
+        )
+        assertEquals(setOf("only-this"), child!!.enabledSkills)
+    }
+
+    @Test
+    fun `an own local tool list replaces the parent's and leaves the other tool fields inherited`() {
         val parent = parent()
         val child = SubAgentSurface.resolveChildAssistant(
             parent,
@@ -123,7 +140,9 @@ class SubAgentSurfaceTest {
         assertEquals(parent.id, child.id)
         assertEquals(parent.enableWebSearch, child.enableWebSearch)
         assertEquals(parent.workspaceId, child.workspaceId)
-        assertEquals(parent.enabledSkills, child.enabledSkills)
+        // G 批 — skills are the ONE field a child never inherits (CC parity): an expert that
+        // declares none leaves the child with none, even though everything else is the parent's.
+        assertTrue(child.enabledSkills.isEmpty())
         assertEquals(parent.enableSubAgentToolSurface, child.enableSubAgentToolSurface)
         // ...and its name is the expert's, which is what makes the derived assistant readable in
         // a log even though nothing looks it up by name.
@@ -207,7 +226,10 @@ class SubAgentSurfaceTest {
         // namespace; the definition then has no surface and inherits verbatim.
         val noNamespace = definition().copy(slug = "  ")
         assertFalse(SubAgentSurface.hasOwnSurface(noNamespace))
-        assertNull(SubAgentSurface.resolveChildAssistant(parent(), noNamespace))
+        // With no skills to strip either, there is nothing to derive at all.
+        assertNull(
+            SubAgentSurface.resolveChildAssistant(parent().copy(enabledSkills = emptySet()), noNamespace),
+        )
     }
 
     @Test

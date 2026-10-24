@@ -461,6 +461,8 @@ fun subagentListTool(
         },
         execute = { args ->
             val params = args.jsonObject
+            // G 批 — 第一次 list 时把上一个进程留下的 run 读回来（只读一次）。
+            registry.ensureHydrated()
             val activeOnly = params["active_only"]?.jsonPrimitive?.booleanOrNull ?: false
             // With no library configured `kind` is not even described, so a stale value is
             // ignored rather than honoured — the same rule T-04/T-09 apply to their gated
@@ -508,7 +510,8 @@ fun subagentGetTool(registry: SubAgentRegistry): Tool = Tool(
     execute = { args ->
         val id = args.jsonObject["id"]?.jsonPrimitive?.contentOrNull
             ?: return@Tool errEnv("invalid_id", "id is required")
-        val run = registry.get(id)
+        registry.ensureHydrated()
+        val run = registry.get(id) ?: SubAgentRunPersistence.load(id)
             ?: return@Tool errEnv("unknown_id", "no sub-agent run with id $id")
         listOf(UIMessagePart.Text(encodeRun(run).toString()))
     },

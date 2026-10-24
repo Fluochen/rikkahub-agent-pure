@@ -109,6 +109,16 @@ class RikkaHubApp : Application() {
         // before any cron worker fires so mark/unmark are consistent.
         HeadlessConversations.init(this)
 
+        // G 批 — sub-agent runs are persisted as one JSON per run, so `subagent_list` / `get` /
+        // `send` still work after a restart (the conversations themselves were always durable;
+        // only the handles were lost). Installed here, not in DI, so the path is the same one the
+        // rest of app-private state uses and tests never touch it.
+        runCatching {
+            me.rerere.rikkahub.subagent.SubAgentRunPersistence.install(
+                File(filesDir, "subagent_runs"),
+            )
+        }
+
         // Sweep orphan headless conversations created by workers that were killed mid-execute.
         sweepOrphanHeadlessConversations()
 

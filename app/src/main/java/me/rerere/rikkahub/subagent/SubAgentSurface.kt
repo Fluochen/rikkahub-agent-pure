@@ -61,8 +61,13 @@ object SubAgentSurface {
      *
      * Returns `null` — "inherit the parent verbatim" — when there is nothing to override: no
      * definition at all, no parent assistant (a deleted parent), or a definition whose every
-     * surface field is unset. That is the pre-P2-04 behaviour, and it is the answer for every
-     * expert that only picks a model / system prompt (the overwhelmingly common case).
+     * surface field is unset **and** whose parent has no skills to strip. That is the pre-P2-04
+     * behaviour, and it is the answer for every expert that only picks a model / system prompt
+     * when the parent assistant has no skills enabled.
+     *
+     * G 批第四片 — skills are the exception to "null means inherit": a child gets the expert's
+     * declared skills, or none at all. So a definition that declares nothing still derives a
+     * child when the parent has skills, purely to drop them.
      *
      * When at least one field is set, the parent is copied with each field taken from the
      * definition when it has an opinion and from the parent otherwise — the overlay itself lives in
@@ -75,7 +80,11 @@ object SubAgentSurface {
      */
     fun resolveChildAssistant(parent: Assistant?, definition: AgentDefinition?): Assistant? {
         if (parent == null || definition == null) return null
-        if (!hasOwnSurface(definition)) return null
+        // G 批第四片 — 即使专家什么都没声明，只要父助手带着技能，也要派生出一个子助手：
+        // 派生的唯一作用是把继承来的技能清空（见 toAssistant）。父助手本来就没有技能时返回
+        // null，保持"没有差异就不派生"的旧行为。
+        val stripsInheritedSkills = parent.enabledSkills.isNotEmpty() && definition.skills == null
+        if (!hasOwnSurface(definition) && !stripsInheritedSkills) return null
         return definition.toAssistant(parent)
     }
 
