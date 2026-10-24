@@ -33,6 +33,17 @@ class UsageCallRecorderTest {
         override suspend fun tokensForConversation(conversationId: String) =
             rows.filter { it.conversationId == conversationId }
                 .sumOf { it.inputTokens.toLong() + it.outputTokens }
+        override suspend fun billableTokensForConversation(conversationId: String) =
+            rows.filter { it.conversationId == conversationId }
+                .sumOf { row ->
+                    val input = if (row.cachedTokensReported) {
+                        maxOf(row.inputTokens - row.cachedTokens, 0)
+                    } else {
+                        row.inputTokens
+                    }
+                    input.toLong() + row.outputTokens
+                }
+
         override suspend fun deleteOlderThan(cutoffMs: Long) = 0
     }
 
