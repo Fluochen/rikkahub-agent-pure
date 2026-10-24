@@ -63,6 +63,7 @@ val viewModelModule = module {
             settingsStore = get(),
             chatService = get(),
             missionLauncher = get(),
+            snapshotStore = get(),
         )
     }
     viewModelOf(::SettingVM)

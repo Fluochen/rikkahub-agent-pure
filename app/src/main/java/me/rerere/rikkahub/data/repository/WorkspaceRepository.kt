@@ -248,6 +248,18 @@ class WorkspaceRepository(
         manager.resolveFile(workspace.root, path, area)
     }
 
+    /**
+     * 批 F — 工作区 FILES 区的根目录（不是某个文件）。
+     *
+     * 任务快照要整份拷目录，[resolveFile] 只接受文件路径，所以单开一个。工作区不存在返回 null
+     * 而不是抛异常：快照是「后悔药」，拿不到目录只是不快照，不该让一轮任务开不起来。
+     */
+    suspend fun filesDir(id: String): java.io.File? = withContext(Dispatchers.IO) {
+        val workspace = dao.getById(id) ?: return@withContext null
+        manager.ensureWorkspace(workspace.root)
+        manager.filesDir(workspace.root)
+    }
+
     suspend fun exportFile(
         id: String,
         area: WorkspaceStorageArea,

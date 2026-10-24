@@ -73,11 +73,18 @@ import me.rerere.hugeicons.stroke.BookOpen01
 import me.rerere.hugeicons.stroke.Wrench01
 import me.rerere.hugeicons.stroke.StopCircle
 import me.rerere.hugeicons.stroke.Refresh03
+import me.rerere.hugeicons.stroke.Tick02
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.mission.Artifact
 import me.rerere.rikkahub.data.mission.MissionEntity
 import me.rerere.rikkahub.data.mission.MissionExecutionState
+import me.rerere.rikkahub.data.mission.MissionHook
+import me.rerere.rikkahub.data.mission.MissionHookAction
+import me.rerere.rikkahub.data.mission.MissionHookSpec
+import me.rerere.rikkahub.data.mission.MissionHookWhen
 import me.rerere.rikkahub.data.mission.MissionLimits
+import me.rerere.rikkahub.data.mission.MissionSnapshotStore
+import me.rerere.rikkahub.data.mission.MissionSnapshot
 import me.rerere.rikkahub.data.mission.MissionStatus
 import me.rerere.rikkahub.data.runevent.RunEventEntity
 import me.rerere.rikkahub.data.runevent.RunEventType
@@ -116,6 +123,17 @@ fun MissionDetailPage(missionId: String) {
     var showLimitsDialog by remember { mutableStateOf(false) }
     var showWorkflowDialog by remember { mutableStateOf(false) }
     var showReworkDialog by remember { mutableStateOf(false) }
+    var showSnapshotsDialog by remember { mutableStateOf(false) }
+    var showChecksDialog by remember { mutableStateOf(false) }
+
+    // 批 F — 回退结果（成功/失败）用 toast 报一次，然后清掉。
+    val rollbackMessage by vm.rollbackMessage.collectAsStateWithLifecycle()
+    LaunchedEffect(rollbackMessage) {
+        rollbackMessage?.let {
+            toaster.show(it)
+            vm.clearRollbackMessage()
+        }
+    }
 
     // Batch A — surface launch failures (validation refusals from MissionLauncher) as toasts.
     val launchError by vm.launchError.collectAsStateWithLifecycle()
@@ -176,6 +194,23 @@ fun MissionDetailPage(missionId: String) {
                                 onClick = {
                                     menuExpanded = false
                                     showLimitsDialog = true
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(text = stringResource(R.string.mission_menu_snapshots)) },
+                                leadingIcon = { Icon(HugeIcons.Refresh03, contentDescription = null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    vm.refreshSnapshots()
+                                    showSnapshotsDialog = true
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(text = stringResource(R.string.mission_menu_checks)) },
+                                leadingIcon = { Icon(HugeIcons.Tick02, contentDescription = null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    showChecksDialog = true
                                 },
                             )
                         }
@@ -556,6 +591,23 @@ fun MissionDetailPage(missionId: String) {
                 onSave = { updated ->
                     vm.updateLimits(updated)
                     showLimitsDialog = false
+                },
+            )
+        }
+    }
+
+    if (showSnapshotsDialog) {
+        SnapshotDialog(vm = vm, onDismiss = { showSnapshotsDialog = false })
+    }
+
+    if (showChecksDialog) {
+        mission?.let { m ->
+            ChecksDialog(
+                limits = m.limits,
+                onDismiss = { showChecksDialog = false },
+                onSave = { updated ->
+                    vm.updateLimits(updated)
+                    showChecksDialog = false
                 },
             )
         }
@@ -952,6 +1004,10 @@ private fun LimitsDialog(
                                 stallRounds = stallValue!!,
                                 tokenBudget = tokensValue!!,
                                 requireConfirmation = requireConfirm,
+                                // 批 F — 检查命令不在这个对话框里改，但保存时必须原样带过去，
+                                // 否则「改个轮数」会把用户配的 hook 一并抹掉。
+                                maxCheckFailures = limits.maxCheckFailures,
+                                hooks = limits.hooks,
                             )
                         )
                     }
@@ -1277,4 +1333,238 @@ private fun TimelineRow(event: RunEventEntity) {
             )
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// 批 F — 轮次快照 / 回退
+// ---------------------------------------------------------------------------
+
+/**
+ * 快照列表 + 回退。
+ *
+ * 展示的是「第 N 轮开始前」的那一份（以及回退时自动生成的安全副本）。回退要二次确认，因为它是
+ * 覆盖写；文案里明确说了「当前状态会先存成备份」，用户知道这一步可撤销才敢点。
+ */
+@Composable
+private fun SnapshotDialog(
+    vm: MissionDetailVM,
+    onDismiss: () -> Unit,
+) {
+    val snapshots by vm.snapshots.collectAsStateWithLifecycle()
+    var pending by remember { mutableStateOf<MissionSnapshot?>(null) }
+    val formatter = remember { java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(R.string.mission_snapshots_title)) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.mission_snapshots_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (snapshots.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.mission_snapshots_empty),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                for (snapshot in snapshots) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (snapshot.isSafetyCopy) {
+                                    stringResource(R.string.mission_snapshots_safety)
+                                } else {
+                                    stringResource(R.string.mission_snapshots_round, snapshot.round)
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = stringResource(
+                                    R.string.mission_snapshots_files,
+                                    snapshot.fileCount,
+                                    formatter.format(java.util.Date(snapshot.createdAt)),
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(onClick = { pending = snapshot }) {
+                            Text(text = stringResource(R.string.mission_snapshots_rollback))
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(R.string.cancel))
+            }
+        },
+    )
+
+    pending?.let { snapshot ->
+        AlertDialog(
+            onDismissRequest = { pending = null },
+            title = { Text(text = stringResource(R.string.mission_snapshots_confirm_title)) },
+            text = {
+                Text(text = stringResource(R.string.mission_snapshots_confirm_message, snapshot.round))
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        vm.rollbackTo(snapshot)
+                        pending = null
+                        onDismiss()
+                    },
+                ) {
+                    Text(text = stringResource(R.string.mission_snapshots_rollback))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pending = null }) {
+                    Text(text = stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 批 F — 检查命令（hooks）
+// ---------------------------------------------------------------------------
+
+/**
+ * 三条检查命令的编辑器。
+ *
+ * 只有一个失败动作开关：三条 hook 共用一个策略，比逐条配置好理解。写回时走
+ * [MissionHookSpec.of] —— 空白命令直接丢弃，所以「清空输入」= 关掉这条检查。
+ */
+@Composable
+private fun ChecksDialog(
+    limits: MissionLimits,
+    onDismiss: () -> Unit,
+    onSave: (MissionLimits) -> Unit,
+) {
+    var roundEnd by remember(limits) {
+        mutableStateOf(MissionHookSpec.commandFor(limits, MissionHookWhen.ROUND_END))
+    }
+    var beforeDone by remember(limits) {
+        mutableStateOf(MissionHookSpec.commandFor(limits, MissionHookWhen.BEFORE_DONE))
+    }
+    var afterFailure by remember(limits) {
+        mutableStateOf(MissionHookSpec.commandFor(limits, MissionHookWhen.AFTER_FAILURE))
+    }
+    var blockOnFailure by remember(limits) {
+        mutableStateOf(MissionHookSpec.actionOf(limits) == MissionHookAction.BLOCK)
+    }
+    var maxReworks by remember(limits) { mutableStateOf(limits.maxCheckFailures.toString()) }
+    val maxReworksValue = maxReworks.toIntOrNull()?.takeIf { it >= 0 }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(R.string.mission_checks_title)) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 460.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.mission_checks_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = roundEnd,
+                    onValueChange = { roundEnd = it },
+                    label = { Text(text = stringResource(R.string.mission_checks_round_end)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = beforeDone,
+                    onValueChange = { beforeDone = it },
+                    label = { Text(text = stringResource(R.string.mission_checks_before_done)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = afterFailure,
+                    onValueChange = { afterFailure = it },
+                    label = { Text(text = stringResource(R.string.mission_checks_after_failure)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    text = stringResource(R.string.mission_checks_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.mission_checks_max),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    OutlinedTextField(
+                        value = maxReworks,
+                        onValueChange = { maxReworks = it.filter(Char::isDigit).take(2) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.width(88.dp),
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.mission_checks_block),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    Switch(
+                        checked = blockOnFailure,
+                        onCheckedChange = { blockOnFailure = it },
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val value = maxReworksValue ?: return@TextButton
+                    onSave(
+                        limits.copy(
+                            maxCheckFailures = value,
+                            hooks = MissionHookSpec.of(
+                                roundEnd = roundEnd,
+                                beforeDone = beforeDone,
+                                afterFailure = afterFailure,
+                                failAction = if (blockOnFailure) {
+                                    MissionHook.ACTION_BLOCK
+                                } else {
+                                    MissionHook.ACTION_WARN
+                                },
+                            ),
+                        )
+                    )
+                },
+            ) {
+                Text(text = stringResource(R.string.mission_limits_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(R.string.cancel))
+            }
+        },
+    )
 }

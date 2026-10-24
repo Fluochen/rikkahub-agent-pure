@@ -333,6 +333,27 @@ val dataSourceModule = module {
     // continue rounds). assistantResolver: mission.assistantId when parseable and still
     // present, else the currently selected assistant, else the first assistant. The settings
     // snapshot is read once per launch so a mid-session assistant switch is picked up.
+    // 批 F — 轮次快照：应用私有目录，元数据走 index.json（不需要 schema 迁移）。
+    single {
+        me.rerere.rikkahub.data.mission.MissionSnapshotStore(
+            baseDir = java.io.File(get<Context>().filesDir, "mission_snapshots"),
+        )
+    }
+    // 批 F — 检查命令（hook）：在任务工作区的 shell 里跑，与模型自己的 shell 工具同一环境。
+    single {
+        val ws = get<me.rerere.rikkahub.data.repository.WorkspaceRepository>()
+        me.rerere.rikkahub.service.mission.MissionHookExecutor(
+            shell = me.rerere.rikkahub.service.mission.MissionHookShell { workspaceId, command, timeoutMs ->
+                val result = ws.executeCommand(workspaceId, command, timeoutMillis = timeoutMs)
+                me.rerere.rikkahub.service.mission.HookResult(
+                    exitCode = result.exitCode,
+                    stdout = result.stdout,
+                    stderr = result.stderr,
+                    timedOut = result.timedOut,
+                )
+            },
+        )
+    }
     single {
         val settingsStore = get<SettingsStore>()
         val workspaceRepository = get<me.rerere.rikkahub.data.repository.WorkspaceRepository>()
@@ -367,6 +388,19 @@ val dataSourceModule = module {
             },
             // 批 E — 驱动无头轮次的终结（RUN_FINISHED 是督导的主事件源）。
             appScope = get<AppScope>(),
+            // 批 F — 跨轮状态文件：每轮注入；读不到就是 null（不阻断启动）。
+            stateSource = me.rerere.rikkahub.service.mission.MissionStateSource { workspaceId ->
+                runCatching {
+                    workspaceRepository.readText(
+                        workspaceId,
+                        me.rerere.rikkahub.data.mission.MissionTaskState.PATH,
+                    )
+                }.getOrNull()
+            },
+            snapshotStore = get(),
+            workspaceFiles = me.rerere.rikkahub.service.mission.MissionWorkspaceFiles { workspaceId ->
+                runCatching { workspaceRepository.filesDir(workspaceId) }.getOrNull()
+            },
         )
     }
     // 批 A — mission supervisor (兜底督导): subscribes to run-finished journal events and
@@ -433,6 +467,16 @@ val dataSourceModule = module {
             // Token breaker: everything billed under the mission's execution conversation.
             // The probe is a suspend lambda, so it runs on the supervisor's coroutine.
             tokenProbe = { conversationId -> usageRecordDao.tokensForConversation(conversationId) },
+            // 批 F — 检查命令 + 状态文件对比。
+            hookExecutor = get(),
+            stateSource = me.rerere.rikkahub.service.mission.MissionStateSource { workspaceId ->
+                runCatching {
+                    get<me.rerere.rikkahub.data.repository.WorkspaceRepository>().readText(
+                        workspaceId,
+                        me.rerere.rikkahub.data.mission.MissionTaskState.PATH,
+                    )
+                }.getOrNull()
+            },
         )
     }
     // 批 B — mission scheduler (开始方式：定时 / 触发). Owns the single instance of the

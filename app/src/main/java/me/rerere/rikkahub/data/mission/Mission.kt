@@ -201,7 +201,24 @@ data class MissionLimits(
     val stallRounds: Int = 2,
     val tokenBudget: Long = 500_000L,
     val requireConfirmation: Boolean = false,
-)
+    /**
+     * 批 F — 连续多少次「完成前检查失败」的返工之后把任务交给用户。
+     *
+     * `mission_report(done)` 不再等于完成：先跑 [MissionHookWhen.BEFORE_DONE] 的检查，失败就把
+     * 输出当返工要求再跑一轮。同一个任务连续失败到这次数就停手（park 到 REVIEW），避免无限返工
+     * 烧钱。0 表示一次都不返工（检查失败直接交人）。
+     */
+    val maxCheckFailures: Int = 2,
+    /**
+     * 批 F — 任务自带的检查命令（[MissionHook]）。空列表 = 没有任何检查，行为与批 E 一致。
+     *
+     * 存进这个 JSON 列是刻意的：加字段不迁移 schema，旧任务读出来就是空列表。
+     */
+    val hooks: List<MissionHook> = emptyList(),
+) {
+    /** 只保留可执行的 hook（丢掉空白命令、越界超时），写库前统一走这里。 */
+    fun sanitized(): MissionLimits = copy(hooks = MissionHookSpec.sanitize(hooks))
+}
 
 /** Decode [MissionEntity.limitsJson]; null / blank / malformed → balanced defaults. */
 val MissionEntity.limits: MissionLimits
@@ -209,6 +226,10 @@ val MissionEntity.limits: MissionLimits
         limitsJson?.takeIf { it.isNotBlank() }
                 ?.let { JsonInstant.decodeFromString<MissionLimits>(it) }
     }.getOrNull() ?: MissionLimits()
+
+/** 绑定的执行工作区 id；空白字符串一律当作「没有工作区」。 */
+val MissionEntity.workspaceIdOrNull: String?
+    get() = workspaceId?.takeIf { it.isNotBlank() }
 
 /** Decode [MissionEntity.executionState] into a [MissionExecutionState], defaulting to [MissionExecutionState.IDLE]. */
 val MissionEntity.executionStateEnum: MissionExecutionState
