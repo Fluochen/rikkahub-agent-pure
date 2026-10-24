@@ -62,7 +62,7 @@ object ImportedDatabaseReconciler {
      * matching. `internal` so a JVM test can assert these stay in sync with the schema export.
      */
     internal const val EXPECTED_VERSION = 39
-    internal const val EXPECTED_IDENTITY_HASH = "TODO_V39_IDENTITY_HASH"
+    internal const val EXPECTED_IDENTITY_HASH = "20763c65de6b15d789126bb0f05cde41"
 
     /**
      * Columns that a restored file must already have for its shared schema to be considered
