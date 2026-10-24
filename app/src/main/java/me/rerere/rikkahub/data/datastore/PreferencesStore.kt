@@ -36,6 +36,7 @@ import me.rerere.ai.registry.ModelRegistry
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.AssistantResolver
 import me.rerere.rikkahub.data.ai.ContextWindowResolver
+import me.rerere.rikkahub.data.ai.DefaultAssistantPrompt
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_LIBRARY_IMAGE_PROMPT
 import me.rerere.rikkahub.data.gemini.DENIED_MODEL_IDS
@@ -66,6 +67,7 @@ import me.rerere.rikkahub.subagent.SubAgentDispatchProfile
 import me.rerere.rikkahub.ui.theme.CustomTheme
 import me.rerere.rikkahub.ui.theme.PresetThemes
 import me.rerere.rikkahub.runtime.util.JsonInstant
+import me.rerere.rikkahub.runtime.SystemInjections
 import me.rerere.rikkahub.utils.toMutableStateFlow
 import me.rerere.search.SearchCommonOptions
 import me.rerere.search.SearchServiceOptions
@@ -83,6 +85,13 @@ enum class AutoCompactionThresholdMode {
 
 /** Default automatic compaction summary target as a percentage of the active context. */
 const val DEFAULT_CONTEXT_COMPACTION_TARGET_PERCENT = 1
+
+/**
+ * Bumped when the built-in assistants should receive new capability defaults or the prompt
+ * skeleton. [Settings.agentDefaultsVersion] records what an install has already received, so the
+ * upgrade is one-shot: a user who later disables memory or replaces the prompt keeps that choice.
+ */
+private const val CURRENT_AGENT_DEFAULTS_VERSION = 1
 
 private const val TAG = "PreferencesStore"
 
@@ -219,6 +228,16 @@ class SettingsStore(
         val COMPRESS_PROMPT = stringPreferencesKey("compress_prompt")
         val ENABLE_AUTO_COMPACTION = booleanPreferencesKey("enable_auto_compaction")
         val ENABLE_FACT_EXTRACTION = booleanPreferencesKey("enable_fact_extraction")
+        /**
+         * Ids of the built-in prompt packs ([SystemInjections]) sent on every request. Defaults to
+         * every pack; an explicit empty set means "user turned the app layer off", which is why
+         * the read path distinguishes a missing key from an empty one.
+         */
+        val ENABLED_SYSTEM_INJECTIONS = stringPreferencesKey("enabled_system_injections")
+        /** Whether the model may start a workbench mission from a normal conversation. */
+        val ALLOW_MODEL_MISSION_CREATION = booleanPreferencesKey("allow_model_mission_creation")
+        /** One-shot marker for the capability/prompt upgrade applied to built-in assistants. */
+        val AGENT_DEFAULTS_VERSION = intPreferencesKey("agent_defaults_version")
         val AUTO_COMPACTION_THRESHOLD_MODE = stringPreferencesKey("auto_compaction_threshold_mode")
         val AUTO_COMPACTION_THRESHOLD_PERCENT = intPreferencesKey("auto_compaction_threshold_percent")
         val AUTO_COMPACTION_THRESHOLD_TOKENS_K = intPreferencesKey("auto_compaction_threshold_tokens_k")
@@ -359,6 +378,10 @@ class SettingsStore(
                 preferences[COMPRESS_PROMPT] = settings.compressPrompt
                 preferences[ENABLE_AUTO_COMPACTION] = settings.enableAutoCompaction
                 preferences[ENABLE_FACT_EXTRACTION] = settings.enableFactExtraction
+                preferences[ENABLED_SYSTEM_INJECTIONS] =
+                    JsonInstant.encodeToString(settings.enabledSystemInjections)
+                preferences[ALLOW_MODEL_MISSION_CREATION] = settings.allowModelMissionCreation
+                preferences[AGENT_DEFAULTS_VERSION] = settings.agentDefaultsVersion
                 preferences[AUTO_COMPACTION_THRESHOLD_MODE] = settings.autoCompactionThresholdMode.name
                 preferences[AUTO_COMPACTION_THRESHOLD_PERCENT] =
                     settings.autoCompactionThresholdPercent.coerceIn(5, 95)
@@ -487,8 +510,15 @@ class SettingsStore(
                 compressPrompt = preferences[COMPRESS_PROMPT] ?: DEFAULT_COMPRESS_PROMPT,
                 assistantId = preferences[SELECT_ASSISTANT]?.let { runCatching { Uuid.parse(it) }.getOrNull() }
                     ?: DEFAULT_ASSISTANT_ID,
-                enableAutoCompaction = preferences[ENABLE_AUTO_COMPACTION] == true,
+                enableAutoCompaction = preferences[ENABLE_AUTO_COMPACTION] ?: true,
                 enableFactExtraction = preferences[ENABLE_FACT_EXTRACTION] ?: true,
+                enabledSystemInjections = preferences[ENABLED_SYSTEM_INJECTIONS]?.let { raw ->
+                    runCatching { JsonInstant.decodeFromString<Set<String>>(raw) }
+                        .getOrNull()
+                        ?.let { ids -> SystemInjections.normalize(ids) }
+                } ?: SystemInjections.DEFAULT_IDS,
+                allowModelMissionCreation = preferences[ALLOW_MODEL_MISSION_CREATION] != false,
+                agentDefaultsVersion = preferences[AGENT_DEFAULTS_VERSION] ?: 0,
                 autoCompactionThresholdMode = preferences[AUTO_COMPACTION_THRESHOLD_MODE]
                     ?.let { value -> runCatching { AutoCompactionThresholdMode.valueOf(value) }.getOrNull() }
                     ?: AutoCompactionThresholdMode.PERCENT,
@@ -766,6 +796,25 @@ class SettingsStore(
                 }.toMutableList()
             }
             val newAutoEnabled = it.autoEnabledDefaultSkills + DEFAULT_AUTO_ENABLED_SKILLS
+            // One-shot capability defaults for the built-in assistants. The app's original
+            // defaults were "everything off", which made every new install a configuration
+            // project: memory, recent-chat reference, model-initiated compaction and sub-agent
+            // context refs all had to be discovered. They are on for built-ins once, then the
+            // user's own choices win (the version marker records that the upgrade happened).
+            val needsAgentDefaults = it.agentDefaultsVersion < CURRENT_AGENT_DEFAULTS_VERSION
+            if (needsAgentDefaults) {
+                assistants = assistants.map { assistant ->
+                    if (DEFAULT_ASSISTANTS.any { default -> default.id == assistant.id }) {
+                        assistant.copy(
+                            systemPrompt = DefaultAssistantPrompt.upgrade(assistant.systemPrompt),
+                            enableMemory = true,
+                            enableRecentChatsReference = true,
+                            enableCompactContextTool = true,
+                            enableSubAgentContextRefs = true,
+                        )
+                    } else assistant
+                }.toMutableList()
+            }
             val ttsProviders = it.ttsProviders.ifEmpty { DEFAULT_TTS_PROVIDERS }.toMutableList()
             DEFAULT_TTS_PROVIDERS.forEach { defaultTTSProvider ->
                 if (ttsProviders.none { provider -> provider.id == defaultTTSProvider.id }) {
@@ -777,6 +826,12 @@ class SettingsStore(
                 assistants = assistants,
                 autoEnabledDefaultSkills = newAutoEnabled,
                 ttsProviders = ttsProviders,
+                enableAutoCompaction = if (needsAgentDefaults) true else it.enableAutoCompaction,
+                agentDefaultsVersion = if (needsAgentDefaults) {
+                    CURRENT_AGENT_DEFAULTS_VERSION
+                } else {
+                    it.agentDefaultsVersion
+                },
             )
         }
         .map { settings ->
@@ -1054,6 +1109,24 @@ data class Settings(
      * a switch rather than a constant because it costs tokens on every compaction.
      */
     val enableFactExtraction: Boolean = true,
+    /**
+     * Which built-in app-level prompt packs [SystemInjections] renders into the stable section of
+     * every request. On by default: the whole point is that a new user does not have to write
+     * tool discipline, file placement, verification and mission rules into their own prompt.
+     * Unknown ids are dropped on read.
+     */
+    val enabledSystemInjections: Set<String> = SystemInjections.DEFAULT_IDS,
+    /**
+     * Whether the model may start a workbench mission from a normal conversation via
+     * `mission_create`. On by default; the tool still requires tool approval and refuses inside
+     * a mission round (no recursive missions).
+     */
+    val allowModelMissionCreation: Boolean = true,
+    /**
+     * One-shot marker for the built-in assistant upgrade (capability defaults + prompt skeleton).
+     * Kept so a user who later turns any of those off is not re-opted-in on the next launch.
+     */
+    val agentDefaultsVersion: Int = 0,
     val autoCompactionThresholdMode: AutoCompactionThresholdMode = AutoCompactionThresholdMode.PERCENT,
     val autoCompactionThresholdPercent: Int = 80,
     val autoCompactionThresholdTokensK: Int = 8,
@@ -1527,7 +1600,9 @@ internal val DEFAULT_ASSISTANTS = listOf(
     Assistant(
         id = DEFAULT_ASSISTANT_ID,
         name = "",
-        systemPrompt = "",
+        // A short, generic skeleton. Mechanics come from SystemInjections and <app_environment>,
+        // so this prompt stays small and does not need editing when a capability ships.
+        systemPrompt = DefaultAssistantPrompt.SKELETON,
         // The agent-core skill bundle (SOUL/HEARTBEAT/TOOLS) ships with the app and is what
         // teaches every model "you are running on RikkaHub, here are the tools, here is how
         // to avoid loops". Auto-enabling it on default assistants means new users get an
@@ -1537,21 +1612,7 @@ internal val DEFAULT_ASSISTANTS = listOf(
     Assistant(
         id = Uuid.parse("3d47790c-c415-4b90-9388-751128adb0a0"),
         name = "",
-        systemPrompt = """
-            You are a helpful assistant, called {{char}}, based on model {{model_name}}.
-
-            ## Info
-            - Date: {{cur_date}}
-            - Locale: {{locale}}
-            - Timezone: {{timezone}}
-            - Device Info: {{device_info}}
-            - System Version: {{system_version}}
-            - User Nickname: {{user}}
-
-            ## Hint
-            - If the user does not specify a language, reply in the user's primary language.
-            - Remember to use Markdown syntax for formatting, and use latex for mathematical expressions.
-        """.trimIndent(),
+        systemPrompt = DefaultAssistantPrompt.SKELETON,
         enabledSkills = setOf("agent-core") + DEFAULT_AUTO_ENABLED_SKILLS,
     ),
 )

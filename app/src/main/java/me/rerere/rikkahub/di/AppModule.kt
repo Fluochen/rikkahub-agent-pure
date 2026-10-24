@@ -338,6 +338,9 @@ val appModule = module {
             libraryIndex = get(),
             conversationIndex = get(),
             missionEngine = get(),
+            // Lambda, not an eager get(): MissionCreationService -> MissionLauncher -> RunService
+            // -> ChatService would close a Koin construction cycle otherwise.
+            missionCreationProvider = { get<me.rerere.rikkahub.service.mission.MissionCreationService>() },
             runCheckpointRepository = get(),
             runOrchestrator = get()
         )

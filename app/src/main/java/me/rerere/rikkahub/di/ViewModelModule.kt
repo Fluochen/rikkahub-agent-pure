@@ -31,6 +31,7 @@ import me.rerere.rikkahub.ui.pages.translator.TranslatorVM
 import me.rerere.rikkahub.ui.pages.setting.doctor.DoctorViewModel
 import me.rerere.rikkahub.ui.pages.setting.scheduledjobs.ScheduledJobsViewModel
 import me.rerere.rikkahub.ui.pages.workbench.MissionDetailVM
+import me.rerere.rikkahub.ui.pages.workbench.MissionWorkflowsVM
 import me.rerere.rikkahub.ui.pages.workbench.WorkbenchVM
 import me.rerere.rikkahub.workflow.ui.WorkflowsViewModel
 import org.koin.core.module.dsl.viewModel
@@ -54,6 +55,7 @@ val viewModelModule = module {
     viewModelOf(::EmbeddingModelViewModel)
     viewModelOf(::ChatDrawerVM)
     viewModelOf(::WorkbenchVM)
+    viewModelOf(::MissionWorkflowsVM)
     viewModel<MissionDetailVM> { params ->
         MissionDetailVM(
             missionId = params.get(),

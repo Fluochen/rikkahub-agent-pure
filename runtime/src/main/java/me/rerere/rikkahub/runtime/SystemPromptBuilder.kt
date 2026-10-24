@@ -18,12 +18,17 @@ class SystemPromptBuilder {
 
     /**
      * Returns the system prompt split into `(stable, volatile)`.
-     * - stable: assistant prompt + tool cost guidance + tool prompts.
+     * - stable: assistant prompt + app injections + tool cost guidance + tool prompts.
      * - volatile: memory + recent chats + per-call addendum.
      * Either may be blank.
+     *
+     * [systemInjectionPrompt] is the app's own layer (see [SystemInjections]); it sits after
+     * the user's assistant prompt so a recency-reading model gives it more weight, and it is
+     * byte-stable turn to turn, so it stays inside the cached prefix.
      */
     fun buildSections(
         assistantPrompt: String,
+        systemInjectionPrompt: String = "",
         memoryPrompt: String = "",
         factsPrompt: String = "",
         recentChatsPrompt: String = "",
@@ -33,6 +38,10 @@ class SystemPromptBuilder {
     ): Pair<String, String> {
         val stable = buildString {
             if (assistantPrompt.isNotBlank()) append(assistantPrompt)
+            if (systemInjectionPrompt.isNotBlank()) {
+                if (isNotEmpty()) appendLine()
+                append(systemInjectionPrompt)
+            }
             if (toolPrompts.isNotEmpty()) {
                 if (isNotEmpty()) appendLine()
                 appendLine("Tool cost guidance: prefer low-cost text tools before expensive visual or broad tools. Use read_window_tree/browser_get_text before screenshots when text is enough, and avoid repeating high-cost tools unless the state likely changed.")
@@ -70,6 +79,7 @@ class SystemPromptBuilder {
      *  not split into cache blocks. */
     fun build(
         assistantPrompt: String,
+        systemInjectionPrompt: String = "",
         memoryPrompt: String = "",
         factsPrompt: String = "",
         recentChatsPrompt: String = "",
@@ -78,8 +88,8 @@ class SystemPromptBuilder {
         policyPrompt: String = "",
     ): String {
         val (stable, volatile) = buildSections(
-            assistantPrompt, memoryPrompt, factsPrompt, recentChatsPrompt, toolPrompts,
-            systemAddendum, policyPrompt
+            assistantPrompt, systemInjectionPrompt, memoryPrompt, factsPrompt,
+            recentChatsPrompt, toolPrompts, systemAddendum, policyPrompt
         )
         return listOf(stable, volatile).filter { it.isNotBlank() }.joinToString("\n")
     }

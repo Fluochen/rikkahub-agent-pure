@@ -403,6 +403,15 @@ val dataSourceModule = module {
             },
         )
     }
+    // One creation path for human- and model-started missions: workspace provisioning, workflow
+    // seeding, workflow resolution, row creation, optional first launch.
+    single {
+        me.rerere.rikkahub.service.mission.MissionCreationService(
+            missionRepository = get(),
+            workspaceRepository = get(),
+            missionLauncher = get(),
+        )
+    }
     // 批 A — mission supervisor (兜底督导): subscribes to run-finished journal events and
     // runs the boot orphan scan (started from RikkaHubApp). Probes bridge to the real
     // repositories; notify bridges to NotificationUtil on a dedicated channel ("任务",

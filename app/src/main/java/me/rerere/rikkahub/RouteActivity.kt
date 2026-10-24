@@ -573,6 +573,10 @@ class RouteActivity : ComponentActivity() {
                                 me.rerere.rikkahub.ui.pages.workbench.MissionDetailPage(missionId = key.id)
                             }
 
+                            entry<Screen.MissionWorkflows> {
+                                me.rerere.rikkahub.ui.pages.workbench.MissionWorkflowsPage()
+                            }
+
                             entry<Screen.Workbench> { key ->
                                 me.rerere.rikkahub.ui.pages.workbench.WorkbenchPage(
                                     currentConversationId = key.conversationId,
@@ -874,6 +878,10 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data class MissionDetail(val id: String) : Screen
+
+    /** Workflow library for the workbench: workspace documents plus the built-in templates. */
+    @Serializable
+    data object MissionWorkflows : Screen
 
     /**
      * The full-screen workbench. [conversationId] only seeds the create form's default
