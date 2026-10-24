@@ -219,8 +219,12 @@ object ToolApprovalDefaults {
         // Sub-agents — subagent_dispatch spawns an autonomous LLM run with the parent's
         // tool surface. Approval-required so the user sees the task + tools before
         // delegation happens. list / get / cancel are read-only or user-controlling and
-        // have no entry here.
+        // have no entry here. subagent_send / subagent_fanout cost the same tokens as a
+        // dispatch (they ARE dispatches: one follow-up, or up to six in parallel), so they
+        // are gated identically.
         "subagent_dispatch",
+        "subagent_send",
+        "subagent_fanout",
 
         // P2-06b — the roster WRITE tools. Approval-required for the same reason as
         // subagent_dispatch above: a stored expert becomes dispatchable immediately, and

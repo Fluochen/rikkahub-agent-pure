@@ -15,6 +15,15 @@ import kotlinx.serialization.Serializable
 data class SubAgentRun(
     val id: String,
     val parentChatId: String?,         // the parent assistant chat that dispatched this — used for /stop cascade
+    /** The sub-agent's own execution conversation. Set once the run body creates (or reuses) it. */
+    val conversationId: String? = null,
+    /**
+     * The expert this run was dispatched as (name, resolved case-insensitively). Kept so a
+     * follow-up (`subagent_send`) runs as the same specialist instead of inheriting the parent.
+     */
+    val agentName: String? = null,
+    /** Set when this run is a follow-up on another run's conversation (`subagent_send`). */
+    val resumedFrom: String? = null,
     val parentAssistantId: String,
     val label: String,
     val task: String,
