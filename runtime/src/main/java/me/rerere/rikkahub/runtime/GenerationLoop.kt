@@ -429,6 +429,8 @@ class GenerationLoop(
         outputFinishTransform: suspend (List<UIMessage>) -> List<UIMessage> = { it },
         assistant: LoopAssistant,
         memories: List<LoopMemory>? = null,
+        /** Live memories the injection rules left out; only used to explain the gap to the model. */
+        memoriesOmitted: Int = 0,
         tools: List<Tool> = emptyList(),
         // Tools re-evaluated on EVERY step of the turn and appended to [tools] above. [tools] is
         // a per-turn snapshot on purpose — the progressive catalogue's semantic guess must not
@@ -543,8 +545,8 @@ class GenerationLoop(
                     }
                     buildMemoryTools(
                         json = json,
-                        onCreation = { content ->
-                            memoryRepo.addMemory(memoryAssistantId, content)
+                        onCreation = { content, kind ->
+                            memoryRepo.addMemory(memoryAssistantId, content, kind)
                         },
                         onUpdate = { id, content ->
                             memoryRepo.updateContent(id, content)
@@ -638,6 +640,7 @@ class GenerationLoop(
                         provider = provider,
                         tools = toolsInternal,
                         memories = memories ?: emptyList(),
+                        memoriesOmitted = memoriesOmitted,
                         stream = assistant.streamOutput,
                         processingStatus = processingStatus,
                         conversationSystemPrompt = conversationSystemPrompt,
@@ -1249,6 +1252,7 @@ class GenerationLoop(
         provider: ProviderSetting,
         tools: List<Tool>,
         memories: List<LoopMemory>,
+        memoriesOmitted: Int = 0,
         stream: Boolean,
         processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
         conversationSystemPrompt: String? = null,
@@ -1278,7 +1282,7 @@ class GenerationLoop(
                     assistant.systemPrompt
                 }
             val memoryPrompt = if (assistant.enableMemory) {
-                buildMemoryPrompt(memories = memories)
+                buildMemoryPrompt(memories = memories, omitted = memoriesOmitted)
             } else ""
             val recentChatsPrompt = if (assistant.enableRecentChatsReference) {
                 buildRecentChatsPrompt(conversationRepo.recentChats(assistant.id, 10))
