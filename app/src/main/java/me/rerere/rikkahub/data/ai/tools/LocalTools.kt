@@ -1041,6 +1041,18 @@ class LocalTools(
                         definitions,
                     )
                 )
+                // 长跑：续聊一个已结束的子代理（保留上下文），以及一次调用并发扇出多个任务。
+                // 与 dispatch 同一道策略闸门 —— profile 关掉委派时它们同样不注册。
+                tools.add(
+                    me.rerere.rikkahub.subagent.subagentSendTool(subAgentEngine, invocationContext)
+                )
+                tools.add(
+                    me.rerere.rikkahub.subagent.subagentFanoutTool(
+                        subAgentEngine,
+                        invocationContext,
+                        definitions,
+                    )
+                )
             }
             tools.add(me.rerere.rikkahub.subagent.subagentListTool(subAgentRegistry, definitions))
             // P2-06b — the roster write tools. Registered alongside the reads; each one prompts

@@ -12,6 +12,9 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.agentdef.AgentDefinition
 import me.rerere.rikkahub.data.agentdef.AgentDefinitionResolver
@@ -529,6 +532,205 @@ fun subagentCancelTool(registry: SubAgentRegistry): Tool = Tool(
         listOf(UIMessagePart.Text(buildJsonObject {
             put("ok", cancelled)
             put("id", id)
+        }.toString()))
+    },
+)
+
+// ---------------------------------------------------------------------------------------------
+// 长跑能力：续聊（subagent_send）与并行 fan-out（subagent_fanout）
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * `subagent_send` — 给一个已经结束的子代理再推一句话。
+ *
+ * 这是 Claude Code 里 `SendMessage(agent_id, ...)` 的对应物：同一个子代理、同一段上下文，接着干，
+ * 而不是把上一轮的结论压缩成一段话重新派发。它解决的是「追问」场景 —— 第一轮让它调研，
+ * 第二轮让它“只把第 3 点展开”，这时新开一个代理就得重讲一遍背景。
+ *
+ * 与 dispatch 一样需要审批（它会真的花 token），并且只在非 headless 的父会话里注册。
+ */
+fun subagentSendTool(
+    engine: SubAgentEngine,
+    callerContext: me.rerere.rikkahub.data.ai.tools.ToolInvocationContext =
+        me.rerere.rikkahub.data.ai.tools.ToolInvocationContext.EMPTY,
+): Tool = Tool(
+    name = "subagent_send",
+    description = """
+        Continue a finished sub-agent with one more message — same context window, same tool
+        allow-list, same expert. Use it for follow-ups ("expand point 3", "now do the same for
+        the other file") instead of dispatching a new agent and restating everything.
+
+        Only a terminal run can be continued (SUCCEEDED / FAILED / TIMED_OUT); a run that is
+        still going cannot be interleaved, and a CANCELLED run stays cancelled.
+        Read-only runs come back as an error envelope — check `subagent_get` first if unsure.
+    """.trimIndent().replace("\n", " "),
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("run_id", buildJsonObject {
+                    put("type", "string")
+                    put("description", "The run to continue — an id from subagent_dispatch or subagent_list.")
+                })
+                put("message", buildJsonObject {
+                    put("type", "string")
+                    put("description", "The follow-up instruction. The sub-agent already knows the previous task and its own findings.")
+                })
+                put("timeout_seconds", buildJsonObject {
+                    put("type", "integer")
+                    put("description", "Wall-clock cap for THIS message. Omit to reuse the original run's timeout.")
+                })
+                put("run_in_background", buildJsonObject {
+                    put("type", "boolean")
+                    put("description", "Return immediately and deliver the result as a system notification.")
+                })
+            },
+            required = listOf("run_id", "message"),
+        )
+    },
+    needsApproval = { true },
+    execute = { args ->
+        if (callerContext.isHeadless) {
+            return@Tool errEnv(
+                "no_recursion",
+                "sub-agent dispatch is not allowed from inside a headless run. Run the work inline instead.",
+            )
+        }
+        val params = args.jsonObject
+        val runId = params["run_id"]?.jsonPrimitive?.contentOrNull?.trim()
+            ?: return@Tool errEnv("invalid_run_id", "run_id is required")
+        val message = params["message"]?.jsonPrimitive?.contentOrNull
+            ?: return@Tool errEnv("invalid_message", "message is required")
+        val runInBackground = params["run_in_background"]?.jsonPrimitive?.booleanOrNull ?: false
+        when (
+            val res = engine.resume(
+                runId = runId,
+                message = message,
+                parentAssistantId = callerContext.callerAssistantId.orEmpty(),
+                parentChatId = callerContext.callerConversationId,
+                timeoutSeconds = params["timeout_seconds"]?.jsonPrimitive?.intOrNull,
+                runInBackground = runInBackground,
+            )
+        ) {
+            is SubAgentEngine.DispatchResult.Reject -> errEnv(res.error, res.detail)
+            is SubAgentEngine.DispatchResult.Ok ->
+                listOf(UIMessagePart.Text(encodeRun(res.run, res.budgetRemaining).toString()))
+        }
+    },
+)
+
+/**
+ * `subagent_fanout` — 一次调用里并发跑 N 个互相独立的任务。
+ *
+ * Moxw 的生成循环是**顺序**执行一条消息里的多个工具调用的，所以「一条消息发 4 个 dispatch」
+ * 并不会并发；要么用 `run_in_background` 逐个扔出去，要么用这个工具一次扇出。后者把并发放进
+ * dispatch 自己手里，父代理只需要等一次、拿回一张汇总表。
+ *
+ * 上限 [SubAgentFanoutRules.MAX_TASKS]（6 个）：再多收益递减，而且引擎的并发闸门会让它们排队。
+ */
+fun subagentFanoutTool(
+    engine: SubAgentEngine,
+    callerContext: me.rerere.rikkahub.data.ai.tools.ToolInvocationContext =
+        me.rerere.rikkahub.data.ai.tools.ToolInvocationContext.EMPTY,
+    definitions: List<AgentDefinition> = emptyList(),
+): Tool = Tool(
+    name = "subagent_fanout",
+    description = """
+        Dispatch several independent sub-agents in PARALLEL — one call, one wait, all results.
+
+        Use it when the work splits into parts that do not depend on each other (audit N modules,
+        check M files, research K questions). Do NOT use it for steps that must happen in order:
+        those belong in one dispatch, or in sequential calls.
+
+        Each entry in `tasks` takes the same fields as subagent_dispatch (task, label, agent,
+        model_id, max_trips, timeout_seconds, no_result). At most 6 tasks per call; the engine's
+        concurrency cap still applies, so extra tasks queue rather than fail.
+
+        With run_in_background=true the call returns handles immediately and results arrive as
+        system notifications — use that for work measured in tens of minutes.
+    """.trimIndent().replace("\n", " "),
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("tasks", buildJsonObject {
+                    put("type", "array")
+                    put("description", "Independent tasks, each {task, label?, agent?, model_id?, max_trips?, timeout_seconds?, no_result?}.")
+                    put("items", buildJsonObject {
+                        put("type", "object")
+                        put("properties", buildJsonObject {
+                            put("task", buildJsonObject { put("type", "string") })
+                            put("label", buildJsonObject { put("type", "string") })
+                            put("agent", buildJsonObject { put("type", "string") })
+                            put("model_id", buildJsonObject { put("type", "string") })
+                            put("max_trips", buildJsonObject { put("type", "integer") })
+                            put("timeout_seconds", buildJsonObject { put("type", "integer") })
+                            put("no_result", buildJsonObject { put("type", "boolean") })
+                        })
+                        put("required", buildJsonArray { add("task") })
+                    })
+                })
+                put("run_in_background", buildJsonObject {
+                    put("type", "boolean")
+                    put("description", "Return handles immediately instead of waiting for all results.")
+                })
+                put("timeout_seconds", buildJsonObject {
+                    put("type", "integer")
+                    put("description", "Default wall-clock cap for tasks that do not set their own.")
+                })
+                put("max_trips", buildJsonObject {
+                    put("type", "integer")
+                    put("description", "Default tool-step cap for tasks that do not set their own.")
+                })
+            },
+            required = listOf("tasks"),
+        )
+    },
+    needsApproval = { true },
+    execute = { args ->
+        if (callerContext.isHeadless) {
+            return@Tool errEnv(
+                "no_recursion",
+                "sub-agent dispatch is not allowed from inside a headless run. Run the work inline instead.",
+            )
+        }
+        val params = args.jsonObject
+        val runInBackground = params["run_in_background"]?.jsonPrimitive?.booleanOrNull ?: false
+        val plan = SubAgentFanoutRules.plan(
+            tasks = runCatching { params["tasks"]?.jsonArray }.getOrNull(),
+            runInBackground = runInBackground,
+            defaultTimeoutSeconds = params["timeout_seconds"]?.jsonPrimitive?.intOrNull,
+            defaultMaxTrips = params["max_trips"]?.jsonPrimitive?.intOrNull,
+        )
+        if (plan is SubAgentFanoutRules.Plan.Invalid) {
+            return@Tool errEnv(plan.code, plan.reason)
+        }
+        val requests = (plan as SubAgentFanoutRules.Plan.Ok).requests
+        val parentAssistantId = callerContext.callerAssistantId.orEmpty()
+        val parentChatId: String? = callerContext.callerConversationId
+        // 真正的并发点：每个任务一条协程，引擎自己的并发闸门负责排队与拒绝。
+        // `async` 必须在 coroutineScope 的接收者上调用 —— 全限定写法会丢掉接收者，
+        // 编译成 deprecated 的无 scope 版本（CI 第一次就是在这里红的）。
+        val results = coroutineScope {
+            requests
+                .map { request ->
+                    async { engine.dispatch(parentAssistantId, parentChatId, request) to request }
+                }
+                .awaitAll()
+        }
+        listOf(UIMessagePart.Text(buildJsonObject {
+            put("count", results.size)
+            put("runs", buildJsonArray {
+                results.forEach { (result, request) ->
+                    when (result) {
+                        is SubAgentEngine.DispatchResult.Ok ->
+                            add(encodeRun(result.run, result.budgetRemaining))
+                        is SubAgentEngine.DispatchResult.Reject -> add(buildJsonObject {
+                            put("error", result.error)
+                            put("detail", result.detail)
+                            put("task", request.task.take(120))
+                        })
+                    }
+                }
+            })
         }.toString()))
     },
 )

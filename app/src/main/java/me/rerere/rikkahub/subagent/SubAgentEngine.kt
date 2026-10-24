@@ -182,6 +182,13 @@ class SubAgentEngine(
         parentAssistantId: String,
         parentChatId: String?,
         request: SubAgentRequest,
+        /**
+         * 续聊：把这次 run 挂在 [resumeOf] 的会话上跑完（`subagent_send` 用）。
+         *
+         * null = 普通派发（新会话）。续聊时并发闸门、台账、失败重试等全部复用同一条路径，
+         * 唯一区别是**不新建会话**，所以子代理看得见自己上一轮做过什么。
+         */
+        resumeOf: SubAgentRun? = null,
     ): DispatchResult = withContext(Dispatchers.Default) {
         // Recursion guard: if the caller is in a headless context already (cron job /
         // workflow / another sub-agent), reject. v1 does not allow nested sub-agents.
@@ -231,6 +238,9 @@ class SubAgentEngine(
         val initialRun = SubAgentRun(
             id = runId,
             parentChatId = parentChatId,
+            conversationId = resumeOf?.conversationId,
+            agentName = resumeOf?.agentName ?: cleaned.agentName,
+            resumedFrom = resumeOf?.id,
             parentAssistantId = parentAssistantId,
             label = cleaned.label?.takeIf { it.isNotBlank() } ?: cleaned.task.take(60),
             task = cleaned.task,
@@ -295,7 +305,7 @@ class SubAgentEngine(
         ledgerIds[runId] = ledgerId
 
         val executionJob = appScope.launch(Dispatchers.IO) {
-            executeRun(runId, parentAssistantId, parentChatId, cleaned)
+            executeRun(runId, parentAssistantId, parentChatId, cleaned, resumeOf?.conversationId)
         }
         registry.setJob(runId, executionJob)
 
@@ -347,6 +357,44 @@ class SubAgentEngine(
             }
             DispatchResult.Ok(registry.get(runId) ?: initialRun, gate.remaining)
         }
+    }
+
+    /**
+     * 续聊：给一个**已经结束**的子代理再推一句话，上下文/工具白名单/专家身份全部保留。
+     *
+     * 和 dispatch 的区别只有两点：复用原来的执行会话（不新建），以及在 run 记录上留
+     * `resumed_from`。并发闸门、台账、失败重试仍然走 dispatch 同一条路径 —— 续聊是一次新的
+     * run，不是对旧 run 的原地续命，这样每次追加都可审计、可取消。
+     */
+    suspend fun resume(
+        runId: String,
+        message: String,
+        parentAssistantId: String,
+        parentChatId: String?,
+        timeoutSeconds: Int? = null,
+        runInBackground: Boolean = false,
+    ): DispatchResult {
+        val previous = registry.get(runId)
+            ?: return DispatchResult.Reject("unknown_id", "no sub-agent run with id $runId")
+        val verdict = SubAgentResumeRules.canResume(previous)
+        if (verdict is SubAgentResumeRules.Verdict.Refused) {
+            return DispatchResult.Reject(verdict.code, verdict.reason)
+        }
+        if (message.isBlank()) {
+            return DispatchResult.Reject("invalid_task", "message must not be blank")
+        }
+        val request = SubAgentResumeRules.resumeRequest(
+            run = previous,
+            message = message.trim(),
+            timeoutSeconds = timeoutSeconds,
+            runInBackground = runInBackground,
+        )
+        return dispatch(
+            parentAssistantId = parentAssistantId,
+            parentChatId = parentChatId,
+            request = request,
+            resumeOf = previous,
+        )
     }
 
     private suspend fun currentAssistantCap(parentAssistantId: String): Int {
@@ -480,6 +528,7 @@ class SubAgentEngine(
         parentAssistantId: String,
         parentChatId: String?,
         request: SubAgentRequest,
+        resumeConversationId: String? = null,
     ) {
         // P2-08 — hold the chat foreground service for the run's ENTIRE life, not just the model
         // calls inside it. ChatService already claims the service around each generation, but a
@@ -495,7 +544,7 @@ class SubAgentEngine(
         // generation never has its service torn down by an orchestration ending, and vice versa.
         val releaseForegroundHold = chatService.retainForegroundForActiveRun()
         try {
-            runSubAgentBody(runId, parentAssistantId, parentChatId, request)
+            runSubAgentBody(runId, parentAssistantId, parentChatId, request, resumeConversationId)
         } finally {
             releaseForegroundHold()
             // P2-12d — the run is over; drop its attribution so no later call inherits it.
@@ -513,6 +562,7 @@ class SubAgentEngine(
         parentAssistantId: String,
         parentChatId: String?,
         request: SubAgentRequest,
+        resumeConversationId: String? = null,
     ) {
         registry.update(runId) { it.copy(status = SubAgentStatus.RUNNING) }
         ledgerIds[runId]?.let { agentRunRepo.setStatus(it, AgentRunStatus.running) }
@@ -589,15 +639,34 @@ class SubAgentEngine(
         if (mediaParts.isNotEmpty()) {
             registry.update(runId) { it.copy(mediaParts = mediaParts.size) }
         }
-        // P2-23 (D7) - file this conversation into the assistant's sub-agent archive folder, if
+        // 续聊（subagent_send）：跑在同一个子代理会话里，历史照旧。会话没了就明确失败 ——
+        // 拿不到历史时继续跑等于悄悄换成一个新代理，那应该走 dispatch。
+        val resumedConversation = resumeConversationId
+            ?.let { raw -> runCatching { Uuid.parse(raw) }.getOrNull() }
+            ?.let { id -> runCatching { conversationRepo.getConversationById(id) }.getOrNull() }
+        if (resumeConversationId != null && resumedConversation == null) {
+            markTerminal(
+                runId,
+                SubAgentStatus.FAILED,
+                "resume conversation $resumeConversationId no longer exists; dispatch a new task instead",
+            )
+            notifyParentIfBackground(parentChatId, registry.get(runId))
+            return
+        }
+        // P2-23 (D7) - file a NEW conversation into the assistant's sub-agent archive folder, if
         // one is configured AND still exists. The list shows only unfiled conversations, so
         // filing is what keeps this out of the main list. A stale setting (folder since deleted)
         // degrades to "unfiled" rather than leaving a dangling folder id on the conversation.
-        val archiveFolder = SubAgentArchiveRules
-            .targetFolderId(settingsStore.settingsFlow.value.subAgentArchiveFolders, parentAsstUuid.toString())
-            ?.let { raw -> runCatching { Uuid.parse(raw) }.getOrNull() }
-            ?.takeIf { id -> runCatching { folderRepository.getFolderById(id) }.getOrNull() != null }
-        val conv = Conversation.ofId(
+        // A resumed conversation is already filed (or deliberately not) — never re-file it.
+        val archiveFolder = if (resumedConversation == null) {
+            SubAgentArchiveRules
+                .targetFolderId(settingsStore.settingsFlow.value.subAgentArchiveFolders, parentAsstUuid.toString())
+                ?.let { raw -> runCatching { Uuid.parse(raw) }.getOrNull() }
+                ?.takeIf { id -> runCatching { folderRepository.getFolderById(id) }.getOrNull() != null }
+        } else {
+            null
+        }
+        val conv = resumedConversation ?: Conversation.ofId(
             id = Uuid.random(),
             assistantId = parentAsstUuid,
             newConversation = true,
@@ -605,10 +674,13 @@ class SubAgentEngine(
             title = "[Sub-agent] ${request.label?.take(40) ?: request.task.take(40)}",
             chatModelId = resolvedChatModelId,
             folderId = archiveFolder,
-        )
-        conversationRepo.insertConversation(conv)
+        ).also { created ->
+            conversationRepo.insertConversation(created)
+        }
         chatService.initializeConversation(conv.id)
         HeadlessConversations.mark(conv.id)
+        // 记下执行会话，`subagent_send` 与 `subagent_get` 都靠它找回上下文。
+        registry.update(runId) { it.copy(conversationId = conv.id.toString()) }
         // P5/P6 — this conversation belongs to the sub-agent's ledger run, so its per-step
         // checkpoints land on that run and the run shows up as a first-class parent-linked
         // Run instead of an anonymous chat.
