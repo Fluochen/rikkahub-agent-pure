@@ -107,6 +107,17 @@
   <string name="assistant_page_tool_result_budget_placeholder">Auto (1/20 of the model window, 400–2000)</string>
   <string name="assistant_page_tool_result_budget_active">Limit: about %d tokens per tool result</string>
   <string name="assistant_page_tool_result_budget_off">Auto: about 1/20 of the model window, 400–2000 tokens</string>
+  <string name="assistant_page_facts_title">Extracted facts</string>
+  <string name="assistant_page_facts_desc">Durable facts pulled from compaction summaries. Read-only: they are extracted by the model, not typed.</string>
+  <string name="assistant_page_facts_empty">No facts yet. They appear after the context is compacted.</string>
+  <string name="assistant_page_memory_expired">expired</string>
+  <string name="memory_kind_preference">Preference</string>
+  <string name="memory_kind_fact">Fact</string>
+  <string name="memory_kind_plan">Plan</string>
+  <string name="memory_kind_state">State</string>
+  <string name="memory_kind_note">Note</string>
+  <string name="setting_model_page_enable_fact_extraction">Extract facts when compacting</string>
+  <string name="setting_model_page_enable_fact_extraction_desc">After a context compaction, one extra call to the compression model turns the summary into durable facts (subject, predicate, object). They appear in the assistant\'s memory page and are injected into later turns. Turn off to save tokens.</string>
   <string name="assistant_page_advanced_section">Advanced / experimental</string>
   <string name="assistant_page_advanced_section_desc">Protocol-level and experimental switches. All default to off; turn one on only if you understand how it changes the model tool surface.</string>
   <string name="assistant_page_compact_context">Model-initiated context compaction</string>

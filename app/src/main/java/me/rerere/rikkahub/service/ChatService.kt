@@ -3639,6 +3639,11 @@ class ChatService(
             getConversationFlow(compaction.conversationId).value.assistantId.toString()
         }.getOrNull() ?: return
         appScope.launch {
+            // A setting, not a constant: this is one extra model call per compaction. Read here
+            // rather than at schedule time so a toggle flipped in between still takes effect.
+            val enabled = runCatching { settingsStore.settingsFlow.first().enableFactExtraction }
+                .getOrDefault(false)
+            if (!enabled) return@launch
             runCatching {
                 factExtractor.extract(
                     assistantId = assistantId,

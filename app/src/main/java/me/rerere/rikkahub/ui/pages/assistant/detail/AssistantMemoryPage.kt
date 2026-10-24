@@ -51,6 +51,7 @@ import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantMemory
+import me.rerere.rikkahub.data.db.entity.MemoryFactEntity
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.data.vector.EmbeddingModelFiles
@@ -82,6 +83,7 @@ fun AssistantMemoryPage(id: String) {
     )
     val assistant by vm.assistant.collectAsStateWithLifecycle()
     val memories by vm.memories.collectAsStateWithLifecycle()
+    val facts by vm.facts.collectAsStateWithLifecycle()
     val workspaces by vm.workspaces.collectAsStateWithLifecycle()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
@@ -105,9 +107,11 @@ fun AssistantMemoryPage(id: String) {
             innerPadding = innerPadding,
             assistant = assistant,
             memories = memories,
+            facts = facts,
             workspaces = workspaces,
             onUpdateAssistant = { vm.update(it) },
             onDeleteMemory = { vm.deleteMemory(it) },
+            onDeleteFact = { vm.deleteFact(it) },
             onAddMemory = { vm.addMemory(it) },
             onUpdateMemory = { vm.updateMemory(it) }
         )
@@ -119,11 +123,13 @@ private fun AssistantMemoryContent(
     innerPadding: PaddingValues,
     assistant: Assistant,
     memories: List<AssistantMemory>,
+    facts: List<MemoryFactEntity>,
     workspaces: List<WorkspaceEntity>,
     onUpdateAssistant: (Assistant) -> Unit,
     onAddMemory: (AssistantMemory) -> Unit,
     onUpdateMemory: (AssistantMemory) -> Unit,
     onDeleteMemory: (AssistantMemory) -> Unit,
+    onDeleteFact: (Int) -> Unit,
 ) {
     val memoryDialogState = useEditState<AssistantMemory> {
         if (it.id == 0) {
@@ -653,6 +659,34 @@ private fun AssistantMemoryContent(
                 )
             }
         }
+
+        // Facts are extracted from compaction summaries, never typed by the user, so this list
+        // is read-only except for delete: rewriting a triple by hand would break the
+        // (subject, predicate) identity the supersede logic depends on.
+        Text(
+            text = stringResource(R.string.assistant_page_facts_title),
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 24.dp, bottom = 4.dp),
+        )
+        Text(
+            text = stringResource(R.string.assistant_page_facts_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        if (facts.isEmpty()) {
+            Text(
+                text = stringResource(R.string.assistant_page_facts_empty),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+        }
+        facts.fastForEach { fact ->
+            key(fact.id) {
+                FactItem(fact = fact, onDelete = { onDeleteFact(fact.id) })
+            }
+        }
     }
 
     if (showColdMemoryDirPicker && coldMemoryWorkspace != null) {
@@ -707,6 +741,60 @@ private fun AssistantMemoryContent(
     )
 }
 
+/** Human label for a `MemoryKind` wire value; unknown kinds read as "note". */
+@Composable
+private fun memoryKindLabel(kind: String): String = stringResource(
+    when (kind) {
+        "preference" -> R.string.memory_kind_preference
+        "fact" -> R.string.memory_kind_fact
+        "plan" -> R.string.memory_kind_plan
+        "state" -> R.string.memory_kind_state
+        else -> R.string.memory_kind_note
+    }
+)
+
+/** One extracted fact: the triple reads as "subject · predicate" over the object value. */
+@Composable
+private fun FactItem(
+    fact: MemoryFactEntity,
+    onDelete: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CustomColors.cardColorsOnSurfaceContainer,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = "${fact.subject} · ${fact.predicate}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = fact.objectValue,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = onDelete) {
+                Icon(HugeIcons.Delete01, stringResource(R.string.assistant_page_delete))
+            }
+        }
+    }
+}
+
 @Composable
 private fun MemoryItem(
     memory: AssistantMemory,
@@ -728,6 +816,25 @@ private fun MemoryItem(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = memoryKindLabel(memory.kind),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    if (memory.validTo != null) {
+                        // Kept visible rather than hidden: the user needs to see what stopped
+                        // being sent, or "why doesn't it remember X" has no answer.
+                        Text(
+                            text = stringResource(R.string.assistant_page_memory_expired),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
                 Text(
                     text = memory.content,
                     maxLines = 5,

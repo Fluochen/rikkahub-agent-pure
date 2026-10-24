@@ -29,23 +29,23 @@ class MemoryRepository(private val memoryDAO: MemoryDAO) {
     fun getMemoriesOfAssistantFlow(assistantId: String): Flow<List<AssistantMemory>> =
         memoryDAO.getMemoriesOfAssistantFlow(assistantId)
             .map { entities ->
-                entities.map { AssistantMemory(it.id, it.content) }
+                entities.map { AssistantMemory(it.id, it.content, it.kind, it.createdAt, it.validTo) }
             }
 
     suspend fun getMemoriesOfAssistant(assistantId: String): List<AssistantMemory> {
         return memoryDAO.getMemoriesOfAssistant(assistantId)
-            .map { AssistantMemory(it.id, it.content) }
+            .map { AssistantMemory(it.id, it.content, it.kind, it.createdAt, it.validTo) }
     }
 
     fun getGlobalMemoriesFlow(): Flow<List<AssistantMemory>> =
         memoryDAO.getMemoriesOfAssistantFlow(GLOBAL_MEMORY_ID)
             .map { entities ->
-                entities.map { AssistantMemory(it.id, it.content) }
+                entities.map { AssistantMemory(it.id, it.content, it.kind, it.createdAt, it.validTo) }
             }
 
     suspend fun getGlobalMemories(): List<AssistantMemory> {
         return memoryDAO.getMemoriesOfAssistant(GLOBAL_MEMORY_ID)
-            .map { AssistantMemory(it.id, it.content) }
+            .map { AssistantMemory(it.id, it.content, it.kind, it.createdAt, it.validTo) }
     }
 
     /**
