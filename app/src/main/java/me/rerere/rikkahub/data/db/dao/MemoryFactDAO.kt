@@ -22,6 +22,13 @@ interface MemoryFactDAO {
     )
     suspend fun getLiveFacts(assistantId: String, limit: Int): List<MemoryFactEntity>
 
+    /** Every live fact — `memory_lookup` searches the whole set, not a page of it. */
+    @Query(
+        "SELECT * FROM memory_fact WHERE assistant_id = :assistantId AND valid_to IS NULL " +
+            "ORDER BY valid_from DESC, id DESC"
+    )
+    suspend fun getAllLiveFacts(assistantId: String): List<MemoryFactEntity>
+
     /** The live row that a new (subject, predicate) would supersede, if any. */
     @Query(
         "SELECT * FROM memory_fact WHERE assistant_id = :assistantId AND subject = :subject " +

@@ -320,6 +320,7 @@ val appModule = module {
             memoryRepository = get(),
             factRepository = get(),
             factExtractor = get(),
+            memoryLookup = get(),
             generationLoop = get(),
             translationHandler = get(),
             templateTransformer = get(),

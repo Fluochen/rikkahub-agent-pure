@@ -108,6 +108,7 @@ import me.rerere.rikkahub.data.ai.tools.createSkillTools
 import me.rerere.rikkahub.data.datastore.SkillGroupRules
 import me.rerere.rikkahub.data.ai.tools.CompactionToolResult
 import me.rerere.rikkahub.data.ai.tools.buildCompactionTools
+import me.rerere.rikkahub.runtime.tools.buildMemoryLookupTool
 import me.rerere.rikkahub.data.ai.tools.createWorkspaceTools
 import me.rerere.rikkahub.data.ai.tools.buildColdMemoryTools
 import me.rerere.rikkahub.runtime.tools.buildToolOutputReadTool
@@ -164,6 +165,7 @@ import me.rerere.rikkahub.data.repository.FolderRepository
 import me.rerere.rikkahub.data.repository.MemoryInjection
 import me.rerere.rikkahub.data.repository.FactInjection
 import me.rerere.rikkahub.data.repository.MemoryFactRepository
+import me.rerere.rikkahub.data.repository.MemoryLookupService
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.workspace.WorkspaceShellStatus
@@ -484,6 +486,7 @@ class ChatService(
     private val memoryRepository: MemoryRepository,
     private val factRepository: MemoryFactRepository,
     private val factExtractor: FactExtractor,
+    private val memoryLookup: MemoryLookupService,
     private val generationLoop: GenerationLoop,
     private val translationHandler: TranslationHandler,
     private val templateTransformer: TemplateTransformer,
@@ -1680,6 +1683,24 @@ class ChatService(
         // P4 — the file library's search, on both build paths so a regenerate sees the surface the
         // first pass had. Off unless enabled AND configured.
         addAll(createLibraryToolsIfConfigured(surfaceAssistant))
+        // The read path for records past the injection budget. Same switch as `memory_tool`:
+        // an assistant with memory off should not be searching what it does not write.
+        if (surfaceAssistant.enableMemory) {
+            add(
+                buildMemoryLookupTool { query, limit ->
+                    memoryLookup.search(
+                        assistantId = surfaceAssistant.id.toString(),
+                        memoryScopeId = if (surfaceAssistant.useGlobalMemory) {
+                            MemoryRepository.GLOBAL_MEMORY_ID
+                        } else {
+                            surfaceAssistant.id.toString()
+                        },
+                        query = query,
+                        limit = limit,
+                    )
+                }
+            )
+        }
         // P6 — parallel child runs (inert unless the model fans work out).
         addAll(
             createMissionDispatchTools(
@@ -2169,6 +2190,24 @@ class ChatService(
         // P4 — the file library's search, on both build paths so a regenerate sees the surface the
         // first pass had. Off unless enabled AND configured.
         addAll(createLibraryToolsIfConfigured(surfaceAssistant))
+        // The read path for records past the injection budget. Same switch as `memory_tool`:
+        // an assistant with memory off should not be searching what it does not write.
+        if (surfaceAssistant.enableMemory) {
+            add(
+                buildMemoryLookupTool { query, limit ->
+                    memoryLookup.search(
+                        assistantId = surfaceAssistant.id.toString(),
+                        memoryScopeId = if (surfaceAssistant.useGlobalMemory) {
+                            MemoryRepository.GLOBAL_MEMORY_ID
+                        } else {
+                            surfaceAssistant.id.toString()
+                        },
+                        query = query,
+                        limit = limit,
+                    )
+                }
+            )
+        }
         addAll(
             createMissionDispatchTools(
                 orchestrator = runOrchestrator,

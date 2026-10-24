@@ -51,6 +51,18 @@ val repositoryModule = module {
         me.rerere.rikkahub.data.ai.FactExtractor(repository = get())
     }
 
+    /**
+     * Cross-store read path for `memory_lookup`: hot memories (with their stored vectors when
+     * the same model is installed) plus extracted facts, ranked together.
+     */
+    single {
+        me.rerere.rikkahub.data.repository.MemoryLookupService(
+            memoryRepository = get(),
+            factRepository = get(),
+            embeddings = get(),
+        )
+    }
+
     single {
         me.rerere.rikkahub.data.repository.MemoryWriteGate(
             repository = get(),
