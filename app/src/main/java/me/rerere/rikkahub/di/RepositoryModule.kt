@@ -37,6 +37,21 @@ val repositoryModule = module {
      * particular surface.
      */
     single {
+        me.rerere.rikkahub.data.repository.MemoryFactRepository(
+            database = get(),
+            dao = get(),
+        )
+    }
+
+    /**
+     * Fact extraction: prompt + parse + commit. The model call itself is injected by
+     * ChatService, which already owns provider resolution and usage accounting.
+     */
+    single {
+        me.rerere.rikkahub.data.ai.FactExtractor(repository = get())
+    }
+
+    single {
         me.rerere.rikkahub.data.repository.MemoryWriteGate(
             repository = get(),
             memoryDAO = get(),

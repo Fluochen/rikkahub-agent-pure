@@ -69,6 +69,18 @@ data class LoopMemory(
     val content: String,
 )
 
+/**
+ * One durable fact for the prompt, projected from :app's `memory_fact` row.
+ *
+ * Short field names on purpose: this block is re-sent on every turn, and
+ * `subject`/`predicate`/`objectValue` as JSON keys would cost more than the values.
+ */
+data class LoopFact(
+    val subject: String,
+    val predicate: String,
+    val objectValue: String,
+)
+
 /** One recent-conversation entry for the "Recent Chats" prompt block. The date is
  *  pre-formatted by :app (its util layer owns the localisation). */
 data class RecentChatEntry(

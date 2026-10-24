@@ -19,6 +19,7 @@ import me.rerere.rikkahub.data.db.dao.FolderDAO
 import me.rerere.rikkahub.data.db.dao.GenMediaDAO
 import me.rerere.rikkahub.data.db.dao.ManagedFileDAO
 import me.rerere.rikkahub.data.db.dao.MemoryDAO
+import me.rerere.rikkahub.data.db.dao.MemoryFactDAO
 import me.rerere.rikkahub.data.db.dao.MessageNodeDAO
 import me.rerere.rikkahub.data.db.dao.ScheduledJobDao
 import me.rerere.rikkahub.data.db.dao.ScheduledJobRunDao
@@ -32,6 +33,7 @@ import me.rerere.rikkahub.data.db.entity.FolderEntity
 import me.rerere.rikkahub.data.db.entity.GenMediaEntity
 import me.rerere.rikkahub.data.db.entity.ManagedFileEntity
 import me.rerere.rikkahub.data.db.entity.MemoryEntity
+import me.rerere.rikkahub.data.db.entity.MemoryFactEntity
 import me.rerere.rikkahub.data.db.entity.MessageNodeEntity
 import me.rerere.rikkahub.data.db.entity.ScheduledJobEntity
 import me.rerere.rikkahub.data.db.entity.ScheduledJobRunEntity
@@ -58,6 +60,7 @@ import me.rerere.rikkahub.workflow.db.WorkflowRunEntity
         ConversationEntity::class,
         ConversationCompactionEntity::class,
         MemoryEntity::class,
+        MemoryFactEntity::class,
         GenMediaEntity::class,
         MessageNodeEntity::class,
         ManagedFileEntity::class,
@@ -75,7 +78,7 @@ import me.rerere.rikkahub.workflow.db.WorkflowRunEntity
         RunEventEntity::class,
         RunCheckpointEntity::class,
     ],
-    version = 38,
+    version = 39,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
@@ -156,6 +159,10 @@ import me.rerere.rikkahub.workflow.db.WorkflowRunEntity
         // nullable, so Room's auto-diff handles the addition; the backup-restore path backfills
         // them in ImportedDatabaseReconciler.
         AutoMigration(from = 37, to = 38),
+        // v39 (上下文压缩 B 批, structured facts): the bi-temporal `memory_fact` table. A pure
+        // addition, so Room creates it outright; the backup-restore path pre-creates it in
+        // ImportedDatabaseReconciler.FORK_ONLY_DDL because it is a fork-only table.
+        AutoMigration(from = 38, to = 39),
     ]
 )
 @TypeConverters(TokenUsageConverter::class)
@@ -165,6 +172,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun conversationCompactionDao(): ConversationCompactionDAO
 
     abstract fun memoryDao(): MemoryDAO
+
+    abstract fun memoryFactDao(): MemoryFactDAO
 
     abstract fun genMediaDao(): GenMediaDAO
 

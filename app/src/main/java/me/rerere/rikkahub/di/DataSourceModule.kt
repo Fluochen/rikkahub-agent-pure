@@ -257,6 +257,10 @@ val dataSourceModule = module {
     }
 
     single {
+        get<AppDatabase>().memoryFactDao()
+    }
+
+    single {
         get<AppDatabase>().genMediaDao()
     }
 

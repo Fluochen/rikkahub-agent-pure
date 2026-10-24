@@ -38,6 +38,41 @@ internal fun buildMemoryPrompt(memories: List<LoopMemory>, omitted: Int = 0) =
     }
 
 /**
+ * The `<facts>` block: durable triples extracted from earlier conversations.
+ *
+ * Separate from `**Memories**` on purpose. Memory is what the model chose to write down, in its
+ * own words; a fact is what a later pass could verify it had been told, with the triple that
+ * makes superseding possible. Merging the two would mean one row cannot be updated without the
+ * other, and they have completely different lifetimes.
+ *
+ * [omitted] carries the same promise as the memory block: the model must know the list is not
+ * exhaustive, or it will deny knowledge it simply cannot see.
+ */
+internal fun buildFactsPrompt(facts: List<LoopFact>, omitted: Int = 0) =
+    buildString {
+        appendLine()
+        append("**Known facts**")
+        appendLine()
+        append("Durable facts from earlier conversations. Each is s=subject, p=predicate, o=object.")
+        appendLine()
+        val json = buildJsonArray {
+            facts.forEach { fact ->
+                add(buildJsonObject {
+                    put("s", fact.subject)
+                    put("p", fact.predicate)
+                    put("o", fact.objectValue)
+                })
+            }
+        }
+        append(json.toString())
+        appendLine()
+        if (omitted > 0) {
+            append("($omitted more facts are stored but not listed. Do not claim they do not exist.)")
+            appendLine()
+        }
+    }
+
+/**
  * The "Recent Chats" block. The query itself is :app's job (LoopRecentChatsProvider);
  * this function only formats the rows — the date is pre-formatted by :app because its
  * util layer owns the localisation.

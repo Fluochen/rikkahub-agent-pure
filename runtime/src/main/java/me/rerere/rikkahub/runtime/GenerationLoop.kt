@@ -431,6 +431,9 @@ class GenerationLoop(
         memories: List<LoopMemory>? = null,
         /** Live memories the injection rules left out; only used to explain the gap to the model. */
         memoriesOmitted: Int = 0,
+        /** Durable facts extracted from earlier conversations (see MemoryFactRules). */
+        facts: List<LoopFact> = emptyList(),
+        factsOmitted: Int = 0,
         tools: List<Tool> = emptyList(),
         // Tools re-evaluated on EVERY step of the turn and appended to [tools] above. [tools] is
         // a per-turn snapshot on purpose — the progressive catalogue's semantic guess must not
@@ -641,6 +644,8 @@ class GenerationLoop(
                         tools = toolsInternal,
                         memories = memories ?: emptyList(),
                         memoriesOmitted = memoriesOmitted,
+                        facts = facts,
+                        factsOmitted = factsOmitted,
                         stream = assistant.streamOutput,
                         processingStatus = processingStatus,
                         conversationSystemPrompt = conversationSystemPrompt,
@@ -1253,6 +1258,8 @@ class GenerationLoop(
         tools: List<Tool>,
         memories: List<LoopMemory>,
         memoriesOmitted: Int = 0,
+        facts: List<LoopFact> = emptyList(),
+        factsOmitted: Int = 0,
         stream: Boolean,
         processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
         conversationSystemPrompt: String? = null,
@@ -1284,6 +1291,11 @@ class GenerationLoop(
             val memoryPrompt = if (assistant.enableMemory) {
                 buildMemoryPrompt(memories = memories, omitted = memoriesOmitted)
             } else ""
+            // Facts ride the same switch as memory: both describe the user, and an assistant
+            // with memory turned off should not suddenly start quoting extracted triples.
+            val factsPrompt = if (assistant.enableMemory && facts.isNotEmpty()) {
+                buildFactsPrompt(facts = facts, omitted = factsOmitted)
+            } else ""
             val recentChatsPrompt = if (assistant.enableRecentChatsReference) {
                 buildRecentChatsPrompt(conversationRepo.recentChats(assistant.id, 10))
             } else ""
@@ -1294,6 +1306,7 @@ class GenerationLoop(
             val (stableSystem, volatileSystem) = systemPromptBuilder.buildSections(
                 assistantPrompt = effectiveSystemPrompt,
                 memoryPrompt = memoryPrompt,
+                factsPrompt = factsPrompt,
                 recentChatsPrompt = recentChatsPrompt,
                 toolPrompts = toolPrompts,
                 systemAddendum = systemAddendum,
