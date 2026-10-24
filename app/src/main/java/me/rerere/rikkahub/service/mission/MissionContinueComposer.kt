@@ -27,6 +27,20 @@ data class HandoffContext(
     /** 1-based number of the round being composed for. */
     val round: Int,
     val maxRounds: Int,
+    /**
+     * 批 F — 上一轮留下的 `task-state.md` 内容（已渲染成块）。空 = 不注入。
+     *
+     * 这是交接条里最该靠前的一块：它比「上一轮结尾 800 字」更结构化，是唯一跨轮的长期记忆。
+     */
+    val stateBlock: String? = null,
+    /**
+     * 批 F — 上一次轮末/失败后检查的失败输出。非空时作为「先修这个」置顶，而不是让模型自己发现。
+     */
+    val checkNote: String? = null,
+    /**
+     * 批 F — 由系统从 journal 汇总的本轮事实（工具调用数、产物数、run 状态）。比模型自述可靠。
+     */
+    val roundDigest: String? = null,
 )
 
 object MissionContinueComposer {
@@ -36,6 +50,9 @@ object MissionContinueComposer {
 
     /** The previous round's tail is capped at this many characters. */
     const val MAX_TAIL_CHARS: Int = 800
+
+    /** 批 F — 检查失败输出进入交接提示前的截断长度。 */
+    const val MAX_CHECK_CHARS: Int = 1_500
 
     /**
      * The standing mission directive, injected by the launcher (MISSION_DIRECTIVE).
@@ -58,6 +75,7 @@ object MissionContinueComposer {
         appendLine()
         appendLine("要求：")
         appendLine("- 产出请放进工作区：先落盘再继续，不要只在对话里描述结果。")
+        appendLine(me.rerere.rikkahub.data.mission.MissionTaskState.directiveRule())
         appendLine("- 任务完成时，调用 mission_report(done) 声明完成，并附交付摘要（做了什么、产物在哪）。")
         appendLine("- 确实被卡住（需要用户决策 / 权限 / 信息）时，调用 mission_report(blocked) 声明并说明原因。")
         appendLine("- 如果你停下但任务尚未完成，系统会提醒你继续；请不要在未完成时假称完成。")
@@ -87,6 +105,17 @@ object MissionContinueComposer {
             appendLine("目标分解（未完成项）：")
             for (item in ctx.goalsChecked) appendLine("- $item")
         }
+        val check = ctx.checkNote?.trim()?.takeIf { it.isNotEmpty() }
+        if (check != null) {
+            appendLine()
+            appendLine("上一轮的检查没有通过，请优先修掉它再继续别的：")
+            appendLine(check.take(MAX_CHECK_CHARS))
+        }
+        val state = ctx.stateBlock?.trim()?.takeIf { it.isNotEmpty() }
+        if (state != null) {
+            appendLine()
+            appendLine(state)
+        }
         appendLine()
         if (ctx.artifacts.isEmpty()) {
             appendLine("已产出清单：（暂无）")
@@ -96,6 +125,12 @@ object MissionContinueComposer {
             if (ctx.artifacts.size > MAX_ARTIFACTS) {
                 appendLine("…等 ${ctx.artifacts.size} 件")
             }
+        }
+        val digest = ctx.roundDigest?.trim()?.takeIf { it.isNotEmpty() }
+        if (digest != null) {
+            appendLine()
+            appendLine("系统记录（上一轮的实际执行事实，不是自述）：")
+            appendLine(digest)
         }
         val tail = ctx.lastRunTail?.trim()?.takeIf { it.isNotEmpty() }
         if (tail != null) {
@@ -130,5 +165,28 @@ object MissionContinueComposer {
         }
         appendLine()
         appendLine("请据此重新执行并交付，不要重做已经符合要求的部分；完成后再次调用 mission_report(done)。")
+    }.trimEnd()
+
+    /**
+     * 批 F — 完成前检查失败时的返工提示。
+     *
+     * 与 [composeRework]（用户打回）的区别：这里的判据是**一条真实命令的退出码**，不是人的意见，
+     * 所以措辞要更硬：先说清楚「你的 done 没有通过检查」，再贴命令与输出，最后要求修完重新声明。
+     * 检查输出可能很长，截断到 [MAX_CHECK_CHARS] 并保留尾部（失败摘要通常在最后）。
+     */
+    fun composeCheckFailure(
+        command: String,
+        output: String,
+        round: Int,
+        maxCheckFailures: Int,
+    ): String = buildString {
+        appendLine("[检查未通过] 你声明了完成，但系统跑的检查命令没有通过 —— 这次交付不算完成。")
+        appendLine()
+        appendLine("检查命令：${command.trim()}")
+        appendLine("输出：")
+        appendLine(me.rerere.rikkahub.data.mission.MissionHookSpec.clipOutput(output, MAX_CHECK_CHARS))
+        appendLine()
+        appendLine("这是第 $round 次返工（上限 $maxCheckFailures 次；超过后任务会停下来交给用户）。")
+        appendLine("请针对上面的失败项修改，不要重做已经通过的部分；修完再次调用 mission_report(done)。")
     }.trimEnd()
 }

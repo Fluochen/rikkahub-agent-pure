@@ -13,8 +13,11 @@ import kotlinx.serialization.json.jsonPrimitive
 import me.rerere.rikkahub.data.agentrun.AgentRunKind
 import me.rerere.rikkahub.data.mission.MissionEntity
 import me.rerere.rikkahub.data.mission.MissionExecutionState
+import me.rerere.rikkahub.data.mission.MissionHookSpec
+import me.rerere.rikkahub.data.mission.MissionHookWhen
 import me.rerere.rikkahub.data.mission.MissionRepository
 import me.rerere.rikkahub.data.mission.MissionStatus
+import me.rerere.rikkahub.data.mission.MissionTaskState
 import me.rerere.rikkahub.data.mission.executionStateEnum
 import me.rerere.rikkahub.data.mission.isLive
 import me.rerere.rikkahub.data.mission.acceptanceCriteria
@@ -22,6 +25,7 @@ import me.rerere.rikkahub.data.mission.isRecurring
 import me.rerere.rikkahub.data.mission.limits
 import me.rerere.rikkahub.data.mission.statusEnum
 import me.rerere.rikkahub.data.mission.toArtifact
+import me.rerere.rikkahub.data.mission.workspaceIdOrNull
 import me.rerere.rikkahub.data.runevent.RunEventEntity
 import me.rerere.rikkahub.data.runevent.RunEventRepository
 import me.rerere.rikkahub.data.runevent.RunEventType
@@ -39,6 +43,22 @@ private const val SIGNAL_BLOCKED_TITLE: String = "mission_report: blocked"
  * this check the supervisor would happily "continue" what the user just halted.
  */
 private const val USER_STOP_TITLE: String = "user_stop"
+
+// ---- 批 F — 检查命令 / 状态文件的 journal 标题 -------------------------------------------
+/** 完成前检查失败（用于计数返工次数）。 */
+private const val CHECK_FAILED_TITLE: String = "check_failed"
+
+/** 完成前检查通过的 journal 标题（用于把「连续失败」截断）。 */
+private const val CHECK_PASSED_TITLE: String = "check_passed"
+
+/** 轮末检查失败的 journal 标题。 */
+private const val ROUND_CHECK_FAILED_TITLE: String = "round_check_failed"
+
+/** 失败后检查失败的 journal 标题。 */
+private const val FAILURE_CHECK_FAILED_TITLE: String = "failure_check_failed"
+
+/** 本轮结束时 task-state.md 没有变化的标记。 */
+private const val STATE_UNCHANGED_TITLE: String = "state_unchanged"
 
 /** How many recent journal entries [MissionSupervisor.start] subscribes to. */
 private const val OBSERVE_RECENT_LIMIT: Int = 200
@@ -109,6 +129,14 @@ class MissionSupervisor(
      * turning the breaker off — exactly the batch-A behaviour.
      */
     private val tokenProbe: suspend (conversationId: String) -> Long = { 0L },
+    /**
+     * 批 F — 检查命令执行器（DI 接 workspace shell）。null = 不跑 hook，行为与批 E 一致。
+     */
+    private val hookExecutor: MissionHookExecutor? = null,
+    /**
+     * 批 F — 任务状态文件读取出口（DI 接 WorkspaceRepository）。null = 不做「状态有没有更新」判断。
+     */
+    private val stateSource: MissionStateSource? = null,
 ) {
 
     /** run id → ledger status name; null when the run is unknown to the ledger. */
@@ -215,7 +243,7 @@ class MissionSupervisor(
             // race a pending tool and duplicate the round.
             if (mission.executionStateEnum == MissionExecutionState.WAITING_APPROVAL) return
 
-            evaluateAndAct(mission, runId)
+            evaluateAndAct(mission, runId, status)
         }
     }
 
@@ -278,7 +306,11 @@ class MissionSupervisor(
      * Gather the finished round's facts, ask [MissionContinuePolicy], and act.
      * Everything below is best-effort; failures are swallowed by the caller chain.
      */
-    private suspend fun evaluateAndAct(mission: MissionEntity, runId: String) {
+    private suspend fun evaluateAndAct(
+        mission: MissionEntity,
+        runId: String,
+        runStatus: String? = null,
+    ) {
         runCatching {
             val events = runEventRepository.observeByRun(runId).first()
 
@@ -291,6 +323,12 @@ class MissionSupervisor(
             val hasProgress = events.any {
                 it.type == RunEventType.ARTIFACT.name || it.type == RunEventType.TOOL_RESULT.name
             }
+
+            // 批 F — 本轮结束时任务状态文件有没有动过。系统自己看得见的事实，不靠模型自述。
+            noteStateUpdate(mission, events, runId)
+
+            // 批 F — 本轮是失败结束的：先跑「失败后检查」采现场，输出进入下一轮交接。
+            val failureNote = runAfterFailureHook(mission, runId, runStatus)
 
             // Stall counter: cleared by any progress in the round, bumped otherwise.
             val stallRounds = if (hasProgress) {
@@ -339,16 +377,22 @@ class MissionSupervisor(
             )
 
             when (val decision = MissionContinuePolicy.decide(input)) {
-                is ContinueDecision.Complete -> complete(mission, events)
+                is ContinueDecision.Complete -> complete(mission, events, runId)
                 is ContinueDecision.Block -> block(mission, decision.reason)
-                is ContinueDecision.Resume -> resume(mission)
+                is ContinueDecision.Resume -> resume(mission, checkNote = failureNote)
                 is ContinueDecision.Yield, is ContinueDecision.NoOp -> Unit // leave it to the user
             }
         }
     }
 
     /** Done signal: mission → DONE, notify the delivery summary (payload `note`, or a generic line). */
-    private suspend fun complete(mission: MissionEntity, events: List<RunEventEntity>) {
+    private suspend fun complete(
+        mission: MissionEntity,
+        events: List<RunEventEntity>,
+        runId: String? = null,
+    ) {
+        // 批 F — 完成前检查：模型说 done 只是「申请完成」，检查命令说了才算。
+        if (!beforeDoneGate(mission, runId, events)) return
         val summary = doneNote(events) ?: "目标已达成"
 
         // 批 B.5 — the model declared done: record its self-assessment against the goal
@@ -450,11 +494,19 @@ class MissionSupervisor(
      * conversation. A failed launch only notifies — the mission state is left untouched
      * for the user to handle.
      */
-    private suspend fun resume(mission: MissionEntity) {
+    private suspend fun resume(mission: MissionEntity, checkNote: String? = null) {
+        // 批 F — 轮末检查：续跑之前先跑。blocking 的失败直接停任务（这就是「一道门」），
+        // warn 的失败只把输出带进下一轮交接。
+        val roundEnd = runRoundEndHook(mission)
+        if (roundEnd != null && roundEnd.blocking) {
+            block(mission, roundEnd.describe())
+            return
+        }
         val newCount = missionRepository.bumpResumeCount(mission.id)
         val artifacts = runEventRepository.observeByMission(mission.id).first()
             .mapNotNull { it.toArtifact()?.path }
         val tail = mission.conversationId?.let { conversationProbe.lastAssistantText(it) }
+        val warned = roundEnd?.takeIf { it.failed }?.describe()
         val prompt = MissionContinueComposer.compose(
             HandoffContext(
                 title = mission.title,
@@ -464,6 +516,9 @@ class MissionSupervisor(
                 lastRunTail = tail,
                 round = newCount,
                 maxRounds = mission.limits.maxResumeRounds,
+                stateBlock = readStateBlock(mission),
+                checkNote = listOfNotNull(checkNote, warned).joinToString("\n\n").ifBlank { null },
+                roundDigest = roundDigest(mission),
             )
         )
         val outcome = launcher.launch(
@@ -474,6 +529,226 @@ class MissionSupervisor(
         if (!outcome.ok) {
             notify("任务续跑失败：${mission.title}", outcome.error ?: "unknown")
         }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // 批 F — 检查命令（hooks）与任务状态
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * 完成前检查门。
+     *
+     * 返回 true = 可以完成落库；false = 已经拦下了（要么发了返工轮，要么把任务 park 给了用户）。
+     * 三条刻意的规则：
+     * - 没配检查 → 直接放行（老任务行为不变）；
+     * - `warn` 的失败 → 记录但放行（用户自己选择不阻断）；
+     * - 检查**跑不起来**（没工作区 / shell 崩了）→ 放行。基础设施故障不该判工作不合格。
+     */
+    private suspend fun beforeDoneGate(
+        mission: MissionEntity,
+        runId: String?,
+        events: List<RunEventEntity>,
+    ): Boolean {
+        val executor = hookExecutor ?: return true
+        val hook = MissionHookSpec.runnable(mission.limits, MissionHookWhen.BEFORE_DONE).firstOrNull()
+            ?: return true
+        val outcome = executor.run(
+            mission = mission,
+            hook = hook,
+            round = mission.resumeCount + 1,
+            runId = runId,
+            status = RUN_STATUS_SUCCEEDED,
+        ) ?: return true
+
+        if (outcome.skippedReason != null) {
+            journalHook(mission, outcome, runId, CHECK_FAILED_TITLE)
+            return true
+        }
+        if (!outcome.failed) {
+            runCatching {
+                runEventRepository.emit(
+                    type = RunEventType.NOTE,
+                    title = CHECK_PASSED_TITLE,
+                    detail = outcome.describe(),
+                    missionId = mission.id,
+                    conversationId = mission.conversationId,
+                    runId = runId,
+                )
+            }
+            return true
+        }
+
+        journalHook(mission, outcome, runId, CHECK_FAILED_TITLE)
+        if (!outcome.blocking) return true
+
+        val failures = countCheckFailures(mission.id)
+        val maxReworks = mission.limits.maxCheckFailures.coerceAtLeast(0)
+        if (failures > maxReworks) {
+            val reason = "完成前检查连续 ${failures} 次未通过，已交给用户"
+            missionRepository.transition(mission.id, MissionStatus.REVIEW, note = reason)
+            missionRepository.updateExecutionState(mission.id, MissionExecutionState.IDLE)
+            notify("任务待确认：${mission.title}", "$reason\n\n${outcome.describe()}")
+            return false
+        }
+
+        val prompt = MissionContinueComposer.composeCheckFailure(
+            command = hook.command,
+            output = outcome.result?.summary().orEmpty(),
+            round = failures,
+            maxCheckFailures = maxReworks,
+        )
+        val launch = launcher.launch(
+            missionId = mission.id,
+            source = LaunchSource.Continue(mission.resumeCount + 1),
+            continuePrompt = prompt,
+        )
+        if (!launch.ok) {
+            notify("任务返工启动失败：${mission.title}", launch.error ?: "unknown")
+        }
+        return false
+    }
+
+    /**
+     * 轮末检查。返回 null = 没跑（没配 / 没工作区）。
+     *
+     * 注意它在 [resume] 里、**消耗续跑轮次之前**执行：检查挡住的任务不应该再花掉一轮预算。
+     */
+    private suspend fun runRoundEndHook(mission: MissionEntity): MissionHookOutcome? {
+        val executor = hookExecutor ?: return null
+        val hook = MissionHookSpec.runnable(mission.limits, MissionHookWhen.ROUND_END).firstOrNull()
+            ?: return null
+        val outcome = executor.run(
+            mission = mission,
+            hook = hook,
+            round = mission.resumeCount + 1,
+            runId = mission.lastRunId,
+        ) ?: return null
+        if (outcome.failed || outcome.skippedReason != null) {
+            journalHook(mission, outcome, mission.lastRunId, ROUND_CHECK_FAILED_TITLE)
+        }
+        return outcome
+    }
+
+    /**
+     * 失败后检查：本轮 run 以失败/超时/进程丢失结束时，采集现场并返回给下一轮交接。
+     */
+    private suspend fun runAfterFailureHook(
+        mission: MissionEntity,
+        runId: String,
+        runStatus: String?,
+    ): String? {
+        val executor = hookExecutor ?: return null
+        if (!isFailureStatus(runStatus)) return null
+        val hook = MissionHookSpec.runnable(mission.limits, MissionHookWhen.AFTER_FAILURE).firstOrNull()
+            ?: return null
+        val outcome = executor.run(
+            mission = mission,
+            hook = hook,
+            round = mission.resumeCount + 1,
+            runId = runId,
+            status = runStatus,
+        ) ?: return null
+        if (outcome.failed || outcome.skippedReason != null) {
+            journalHook(mission, outcome, runId, FAILURE_CHECK_FAILED_TITLE)
+        }
+        return outcome.takeIf { it.failed }?.describe()
+    }
+
+    /**
+     * 「连续」完成前检查失败的次数：从最后一次通过算起，数之后的失败。
+     *
+     * 不数历史总和 —— 一个跑了十轮、中间通过过一次的任务，不该因为累计失败次数就把返工额度用完。
+     */
+    private suspend fun countCheckFailures(missionId: String): Int = runCatching {
+        val notes = runEventRepository.observeByMission(missionId).first()
+            .filter { it.type == RunEventType.NOTE.name }
+        val lastPassed = notes.indexOfLast { it.title == CHECK_PASSED_TITLE }
+        notes.drop(lastPassed + 1).count { it.title == CHECK_FAILED_TITLE }
+    }.getOrDefault(0)
+
+    private suspend fun journalHook(
+        mission: MissionEntity,
+        outcome: MissionHookOutcome,
+        runId: String?,
+        title: String,
+    ) {
+        runCatching {
+            runEventRepository.emit(
+                type = RunEventType.NOTE,
+                title = title,
+                detail = outcome.describe(),
+                missionId = mission.id,
+                conversationId = mission.conversationId,
+                runId = runId,
+            )
+        }
+    }
+
+    /**
+     * 本轮结束时 task-state.md 有没有更新：对比开跑时写下的指纹。
+     *
+     * 只记录，不改判：状态没更新本身不等于没干活（有的轮次只是在验算），但连续几轮都这样就该看见。
+     */
+    private suspend fun noteStateUpdate(
+        mission: MissionEntity,
+        events: List<RunEventEntity>,
+        runId: String,
+    ) {
+        val source = stateSource ?: return
+        val workspaceId = mission.workspaceIdOrNull ?: return
+        val before = events.firstOrNull {
+            it.type == RunEventType.NOTE.name && it.title == MissionLauncher.STATE_HASH_TITLE
+        }?.detail ?: return
+        val after = runCatching { MissionTaskState.fingerprint(source.read(workspaceId)) }.getOrNull() ?: return
+        if (after != before) return
+        runCatching {
+            runEventRepository.emit(
+                type = RunEventType.NOTE,
+                title = STATE_UNCHANGED_TITLE,
+                detail = "本轮结束时 ${MissionTaskState.PATH} 没有变化",
+                missionId = mission.id,
+                conversationId = mission.conversationId,
+                runId = runId,
+            )
+        }
+    }
+
+    /** 下一轮要注入的任务状态块；没配 / 没工作区 → null。 */
+    private suspend fun readStateBlock(mission: MissionEntity): String? {
+        val source = stateSource ?: return null
+        val workspaceId = mission.workspaceIdOrNull ?: return null
+        val text = runCatching { source.read(workspaceId) }.getOrNull()
+        return MissionTaskState.composeBlock(text)
+    }
+
+    /**
+     * 系统侧的本轮事实：run 状态、工具调用次数、新增产物数。
+     *
+     * 存在的意义是给模型一个**不是它自己写的**进度快照 —— 自述会美化，计数不会。
+     */
+    private suspend fun roundDigest(mission: MissionEntity): String? = runCatching {
+        val runId = mission.lastRunId
+        if (runId == null) {
+            null
+        } else {
+            val events = runEventRepository.observeByRun(runId).first()
+            val tools = events.count { it.type == RunEventType.TOOL_RESULT.name }
+            val artifacts = events.count { it.type == RunEventType.ARTIFACT.name }
+            val status = events.firstOrNull { it.type == RunEventType.RUN_FINISHED.name }?.detail
+            "状态：${status ?: "未知"}；工具调用：$tools 次；本轮新增产物：$artifacts 件"
+        }
+    }.getOrNull()
+
+    /** 台账状态名是否表示「这一轮不是正常跑完的」。 */
+    private fun isFailureStatus(status: String?): Boolean {
+        val normalized = status ?: return false
+        return normalized !in setOf(
+            RUN_STATUS_SUCCEEDED,
+            RUN_STATUS_RUNNING,
+            RUN_STATUS_QUEUED,
+            RUN_STATUS_AWAITING_APPROVAL,
+            RUN_STATUS_CANCELLED,
+        )
     }
 
     /** The `note` field of the latest `mission_report: done` payload, when parseable. */

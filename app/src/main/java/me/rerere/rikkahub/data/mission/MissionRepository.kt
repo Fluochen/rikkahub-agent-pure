@@ -235,7 +235,7 @@ class MissionRepository(
             val existing = dao.getById(id) ?: return@withLock
             dao.upsert(
                 existing.copy(
-                    limitsJson = limits?.let { JsonInstant.encodeToString(it) },
+                    limitsJson = limits?.sanitized()?.let { JsonInstant.encodeToString(it) },
                     updatedAt = System.currentTimeMillis(),
                 )
             )

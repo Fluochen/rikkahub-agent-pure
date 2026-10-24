@@ -13,6 +13,8 @@ import me.rerere.rikkahub.data.mission.MissionEntity
 import me.rerere.rikkahub.data.mission.MissionExecutionState
 import me.rerere.rikkahub.data.mission.MissionLimits
 import me.rerere.rikkahub.data.mission.MissionRepository
+import me.rerere.rikkahub.data.mission.MissionSnapshot
+import me.rerere.rikkahub.data.mission.MissionSnapshotStore
 import me.rerere.rikkahub.data.mission.MissionSettlement
 import me.rerere.rikkahub.data.mission.MissionStatus
 import me.rerere.rikkahub.data.mission.acceptanceChecked
@@ -41,6 +43,8 @@ class MissionDetailVM(
     private val settingsStore: SettingsStore,
     private val chatService: ChatService,
     private val missionLauncher: MissionLauncher,
+    /** 批 F — 轮次快照（回退用）。 */
+    private val snapshotStore: MissionSnapshotStore,
 ) : ViewModel() {
 
     val mission: StateFlow<MissionEntity?> = missionRepository.observeMission(missionId)
@@ -222,8 +226,77 @@ class MissionDetailVM(
 
     fun delete(onDeleted: () -> Unit) {
         viewModelScope.launch {
+            runCatching { snapshotStore.purge(missionId) }
             missionRepository.delete(missionId)
             onDeleted()
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 批 F — 轮次快照 / 回退
+    // ------------------------------------------------------------------
+
+    private val _snapshots = MutableStateFlow<List<MissionSnapshot>>(emptyList())
+
+    /** 该任务的轮次快照，最新在前。 */
+    val snapshots: StateFlow<List<MissionSnapshot>> = _snapshots
+
+    /** 回退结果提示（一次性）；页面用 toast 消费后 [clearRollbackMessage]。 */
+    private val _rollbackMessage = MutableStateFlow<String?>(null)
+    val rollbackMessage: StateFlow<String?> = _rollbackMessage
+
+    fun clearRollbackMessage() {
+        _rollbackMessage.value = null
+    }
+
+    /** 重新读一遍快照索引（打开对话框时调）。 */
+    fun refreshSnapshots() {
+        viewModelScope.launch {
+            _snapshots.value = runCatching { snapshotStore.list(missionId) }.getOrDefault(emptyList())
+        }
+    }
+
+    /**
+     * 把工作区回退到 [snapshot] 拍下的状态。
+     *
+     * 危险操作，所以只从「二次确认过的」UI 入口调。恢复前的当前状态会自动存成一张 `pre_restore`
+     * 快照（见 [MissionSnapshotStore.restore]），所以回退本身也能撤销。
+     */
+    fun rollbackTo(snapshot: MissionSnapshot) {
+        viewModelScope.launch {
+            val mission = runCatching { missionRepository.getById(missionId) }.getOrNull()
+            // 轮次正在跑的时候换文件等于偷走它脚下的地板：先让用户停轮次。
+            if (mission != null && mission.executionStateEnum.isLive) {
+                _rollbackMessage.value = "任务正在执行，先停止当前轮次再回退"
+                return@launch
+            }
+            val workspaceId = resolveWorkspaceId()
+            if (workspaceId == null) {
+                _rollbackMessage.value = "任务没有绑定工作区，无法回退"
+                return@launch
+            }
+            val dir = runCatching { workspaceRepository.filesDir(workspaceId) }.getOrNull()
+            if (dir == null) {
+                _rollbackMessage.value = "工作区目录不存在，无法回退"
+                return@launch
+            }
+            when (val result = snapshotStore.restore(dir, snapshot)) {
+                is MissionSnapshotStore.RestoreResult.Restored -> {
+                    val safety = result.safetySnapshotId?.let { "（回退前状态已存为 $it）" }.orEmpty()
+                    missionRepository.logEvent(
+                        missionId = missionId,
+                        type = RunEventType.NOTE,
+                        title = "rollback",
+                        detail = "回退到第 ${snapshot.round} 轮开始前 · ${result.fileCount} 个文件$safety",
+                    )
+                    _rollbackMessage.value = "已回退到第 ${snapshot.round} 轮开始前$safety"
+                    refreshSnapshots()
+                }
+
+                is MissionSnapshotStore.RestoreResult.Failed -> {
+                    _rollbackMessage.value = result.reason
+                }
+            }
         }
     }
 

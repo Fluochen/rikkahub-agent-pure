@@ -8,8 +8,11 @@ import me.rerere.rikkahub.data.mission.MissionEntity
 import me.rerere.rikkahub.data.mission.MissionExecutionState
 import me.rerere.rikkahub.data.mission.MissionRepository
 import me.rerere.rikkahub.data.mission.MissionStatus
+import me.rerere.rikkahub.data.mission.MissionSnapshotStore
+import me.rerere.rikkahub.data.mission.MissionTaskState
 import me.rerere.rikkahub.data.mission.acceptanceCriteria
 import me.rerere.rikkahub.data.mission.statusEnum
+import me.rerere.rikkahub.data.mission.workspaceIdOrNull
 import me.rerere.rikkahub.data.runevent.RunEventRepository
 import me.rerere.rikkahub.data.runevent.RunEventType
 import me.rerere.rikkahub.service.run.RunRequest
@@ -91,6 +94,15 @@ class MissionLauncher(
      * 保持原行为。
      */
     private val appScope: CoroutineScope? = null,
+    /**
+     * 批 F — 任务状态文件（`task-state.md`）的读取出口，DI 接 WorkspaceRepository；null = 不注入
+     * 状态块（测试与旧构造点保持批 E 行为）。
+     */
+    private val stateSource: MissionStateSource? = null,
+    /** 批 F — 轮次快照。null = 不快照。 */
+    private val snapshotStore: MissionSnapshotStore? = null,
+    /** 批 F — 把工作区 id 解析成 FILES 区目录（快照拷贝的源）；null = 不快照。 */
+    private val workspaceFiles: MissionWorkspaceFiles? = null,
 ) {
 
     /** Launch (or continue) mission [missionId]; see the class KDoc for the full dance. */
@@ -128,12 +140,19 @@ class MissionLauncher(
                 mission.description,
                 mission.acceptanceCriteria,
             )
+            // 批 F — 跨轮状态：每轮都注入。读不到就退化成「先建档」的指令，绝不让一轮任务因为
+            // 状态文件缺失而失败。
+            val stateText = mission.workspaceIdOrNull?.let { workspaceId ->
+                runCatching { stateSource?.read(workspaceId) }.getOrNull()
+            }
+            val stateBlock = stateSource?.let { MissionTaskState.composeBlock(stateText) }.orEmpty()
             val prompt = when (source) {
-                LaunchSource.Create -> joinBlocks(directive, missionWorkflowBlock(mission), CREATE_KICKOFF)
+                LaunchSource.Create -> joinBlocks(directive, missionWorkflowBlock(mission), stateBlock, CREATE_KICKOFF)
                 is LaunchSource.Trigger ->
                     joinBlocks(
                         directive,
                         missionWorkflowBlock(mission),
+                        stateBlock,
                         "[系统] 本任务的开始方式被触发（${source.label}）。" +
                             "现在开始执行本轮任务：先给简短计划，然后立即动手；完成后调用 mission_report(done)。",
                     )
@@ -143,7 +162,7 @@ class MissionLauncher(
                             ok = false,
                             error = "Continue refused: continuePrompt is required",
                         )
-                    joinBlocks(missionWorkflowContinueHint(mission), continueText)
+                    joinBlocks(missionWorkflowContinueHint(mission), continueText, stateBlock)
                 }
             }
 
@@ -159,6 +178,10 @@ class MissionLauncher(
                 "SEMI", "MANUAL" -> false
                 else -> true
             }
+
+            // 批 F — 轮次快照必须在 submit 之前：这一轮会改工作区，基线只能拍在动手之前。
+            // 快照失败/跳过绝不阻断任务（记录一条 journal 就够）。
+            captureRoundSnapshot(mission)
 
             // Arm the mission directive and bind the mission↔conversation mapping before submit
             // when the conversation is known, so the generation that submit kicks off is
@@ -212,6 +235,17 @@ class MissionLauncher(
                         is LaunchSource.Continue -> "continue round ${source.round}"
                         is LaunchSource.Trigger -> "trigger: ${source.label}"
                     },
+                    missionId = missionId,
+                    conversationId = handle.conversationId.toString(),
+                    runId = handle.id,
+                )
+            }
+            // 批 F — 记下本轮开跑时的状态指纹，督导用它判断这一轮到底有没有更新 task-state.md。
+            runCatching {
+                runEventRepository.emit(
+                    type = RunEventType.NOTE,
+                    title = STATE_HASH_TITLE,
+                    detail = MissionTaskState.fingerprint(stateText),
                     missionId = missionId,
                     conversationId = handle.conversationId.toString(),
                     runId = handle.id,
@@ -277,4 +311,50 @@ class MissionLauncher(
     /** Joins prompt sections, dropping blanks so no stray double-newlines end up in a prompt. */
     private fun joinBlocks(vararg blocks: String): String =
         blocks.filter { it.isNotBlank() }.joinToString("\n\n")
+
+    /**
+     * 批 F — 拍一张本轮开始前的工作区快照，并在 journal 上留痕。
+     *
+     * 全程 best-effort：没有工作区、没有配置快照存储、拷贝失败 —— 一律只记一条 NOTE，
+     * 任务照常开跑。快照是「后悔药」，不是前置条件。
+     */
+    private suspend fun captureRoundSnapshot(mission: MissionEntity) {
+        val store = snapshotStore ?: return
+        val files = workspaceFiles ?: return
+        val workspaceId = mission.workspaceIdOrNull ?: return
+        val dir = runCatching { files.filesDir(workspaceId) }.getOrNull() ?: return
+        when (val result = runCatching { store.capture(dir, mission.id) }.getOrNull()) {
+            is MissionSnapshotStore.CaptureResult.Saved -> runCatching {
+                runEventRepository.emit(
+                    type = RunEventType.NOTE,
+                    title = SNAPSHOT_TITLE,
+                    detail = "第 ${result.snapshot.round} 轮开始前 · " +
+                        "${result.snapshot.fileCount} 个文件 · ${result.snapshot.totalBytes / 1024}KB",
+                    missionId = mission.id,
+                )
+            }
+
+            is MissionSnapshotStore.CaptureResult.Skipped -> runCatching {
+                runEventRepository.emit(
+                    type = RunEventType.NOTE,
+                    title = SNAPSHOT_SKIPPED_TITLE,
+                    detail = result.reason,
+                    missionId = mission.id,
+                )
+            }
+
+            else -> Unit // Empty：工作区还是空的，没有可存的东西
+        }
+    }
+
+    companion object {
+        /** 轮次快照的 journal 标题（详情页时间线里显示为一条记录）。 */
+        const val SNAPSHOT_TITLE: String = "snapshot"
+
+        /** 快照被跳过时的 journal 标题。 */
+        const val SNAPSHOT_SKIPPED_TITLE: String = "snapshot_skipped"
+
+        /** 本轮开跑时 task-state.md 的指纹；督导用它对比轮末状态。 */
+        const val STATE_HASH_TITLE: String = "state_hash"
+    }
 }
