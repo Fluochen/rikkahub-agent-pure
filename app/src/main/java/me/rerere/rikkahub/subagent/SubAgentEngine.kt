@@ -313,6 +313,10 @@ class SubAgentEngine(
             return@withContext DispatchResult.Reject("concurrency_cap_reached", slotRefusal)
         }
 
+        // G 批 — 登记表里的第一条记录就落盘：进程在下面任何一步死掉，重启后仍然能查到
+        // "有一个 run 开始了"，而不是一片空白。
+        SubAgentRunPersistence.save(registry.get(runId) ?: initialRun)
+
         // Phase 24 — open the cross-pillar ledger row. domain_id is the sub-agent run id.
         // The row starts in `queued` (the execution coroutine hasn't been launched yet);
         // executeRun() flips it to `running`. If the process dies before then, boot
@@ -372,6 +376,8 @@ class SubAgentEngine(
             // ledger write on this path, and out of [markTerminal] so the registry flip above can
             // never be delayed by a database call.
             markTerminalInRegistry(runId, status, reason)
+            // 落盘是 suspend 的，这个回调不能挂起 —— 扔给 appScope，失败也只是少一条历史。
+            appScope.launch(Dispatchers.IO) { persistRun(runId) }
             ledgerIds.remove(runId)?.let { ledgerId ->
                 appScope.launch(Dispatchers.IO) {
                     runCatching { agentRunRepo.markTerminal(ledgerId, status.toLedgerStatus(), reason) }
@@ -410,7 +416,11 @@ class SubAgentEngine(
         timeoutSeconds: Int? = null,
         runInBackground: Boolean = false,
     ): DispatchResult {
+        // G 批 — 重启后登记表是空的，但磁盘上有这条 run（会话也还在）。
+        // 先补读一次历史，再回落到单条读取，这样 `subagent_send` 跨进程仍然成立。
+        registry.ensureHydrated()
         val previous = registry.get(runId)
+            ?: runCatching { SubAgentRunPersistence.load(runId) }.getOrNull()
             ?: return DispatchResult.Reject("unknown_id", "no sub-agent run with id $runId")
         val verdict = SubAgentResumeRules.canResume(previous)
         if (verdict is SubAgentResumeRules.Verdict.Refused) {
@@ -913,6 +923,7 @@ class SubAgentEngine(
                     finishedAtMs = System.currentTimeMillis(),
                 )
             }
+            persistRun(runId)
             ledgerIds.remove(runId)?.let {
                 agentRunRepo.markTerminal(it, AgentRunStatus.succeeded)
             }
@@ -945,12 +956,19 @@ class SubAgentEngine(
 
     private suspend fun markTerminal(runId: String, status: SubAgentStatus, error: String?) {
         markTerminalInRegistry(runId, status, error)
+        persistRun(runId)
         // Phase 24 — mirror the terminal status into the cross-pillar ledger. TIMED_OUT and
         // FAILED both map to `failed`; CANCELLED maps to `cancelled`. (SUCCEEDED never
         // routes through here — it transitions the ledger row inline in executeRun.)
         ledgerIds.remove(runId)?.let { ledgerId ->
             agentRunRepo.markTerminal(ledgerId, status.toLedgerStatus(), error)
         }
+    }
+
+    /** G 批 — 把登记表里的当前状态写回磁盘（best-effort；写失败不影响运行）。 */
+    private suspend fun persistRun(runId: String) {
+        val run = registry.get(runId) ?: return
+        SubAgentRunPersistence.save(run)
     }
 
     /**

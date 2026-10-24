@@ -30,7 +30,10 @@ fun AgentDefinition.toAssistant(parent: Assistant): Assistant = parent.copy(
     localTools = localTools ?: parent.localTools,
     disabledLocalTools = disabledLocalTools ?: parent.disabledLocalTools,
     mcpServers = mcpServers?.let(::parseUuidSet) ?: parent.mcpServers,
-    enabledSkills = skills ?: parent.enabledSkills,
+    // G 批第四片 — CC 语义：子代理不继承父代理的技能，除非专家显式声明。
+    // 之前 `null` 等于"沿用父的"，于是一个只写了 prompt 的专家会悄悄拿到父助手启用的全部技能；
+    // 技能是注入进系统提示的行为约束，子代理"看起来是最小上下文"，实际上带着别人的规矩在跑。
+    enabledSkills = skills ?: emptySet(),
     // D9: the expert's private namespace *within the parent's workspace*. `workspaceId` is
     // inherited on purpose — the namespace is a subdirectory, not a separate workspace — and
     // this is inert unless the parent already enabled cold memory (T-06 gates the tools on

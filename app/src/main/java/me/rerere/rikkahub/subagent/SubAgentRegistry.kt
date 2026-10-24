@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Phase 11 — in-memory store of sub-agent runs + their associated coroutine [Job]s.
@@ -29,6 +30,9 @@ class SubAgentRegistry {
      * serialisable and we don't want UI consumers re-collecting on Job-pointer churn.
      */
     private val activeJobs: ConcurrentHashMap<String, Job> = ConcurrentHashMap()
+
+    /** 进程启动后是否已经读过磁盘上的历史 run（只读一次）。 */
+    private val hydrated = AtomicBoolean(false)
 
     fun addPending(run: SubAgentRun, job: Job? = null) {
         _runs.update { current ->
@@ -98,6 +102,40 @@ class SubAgentRegistry {
 
     fun clearJob(id: String) {
         activeJobs.remove(id)
+    }
+
+    /**
+     * G 批 — 把上一个进程留下的 run 读回登记表，只做一次。
+     *
+     * 惰性触发（第一次 list/get/send 时）而不是应用启动时：没有任何子代理活动的一次冷启动
+     * 不该付磁盘扫描的钱。读进来的 run 是只读历史 —— 它们的 Job 早就不在了，所以不会被取消，
+     * 也不占并发名额（状态已被 [SubAgentRunPersistence] 收敛成终态）。
+     */
+    suspend fun ensureHydrated() {
+        if (!hydrated.compareAndSet(false, true)) return
+        val restored = runCatching { SubAgentRunPersistence.list() }.getOrDefault(emptyList())
+        hydrate(restored)
+    }
+
+    /**
+     * 合并一批历史 run。已在表里的 id 一律不覆盖（活着的 run 优先），并遵守 LRU 上限。
+     */
+    fun hydrate(runs: List<SubAgentRun>) {
+        if (runs.isEmpty()) return
+        _runs.update { current ->
+            var next = current
+            for (run in runs) {
+                if (next.containsKey(run.id)) continue
+                next = next + (run.id to run)
+                // 逐条淘汰到上限以下：pruneIfNeeded 每次只赶走一条，没有可赶的就停。
+                while (next.size >= SubAgentDefaults.REGISTRY_LRU_CAP) {
+                    val pruned = pruneIfNeeded(next)
+                    if (pruned.size == next.size) break
+                    next = pruned
+                }
+            }
+            next
+        }
     }
 
     private fun pruneIfNeeded(current: Map<String, SubAgentRun>): Map<String, SubAgentRun> {

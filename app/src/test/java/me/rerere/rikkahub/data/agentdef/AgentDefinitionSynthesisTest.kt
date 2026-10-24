@@ -65,9 +65,15 @@ class AgentDefinitionSynthesisTest {
         assertEquals(original.localTools, derived.localTools)
         assertEquals(original.disabledLocalTools, derived.disabledLocalTools)
         assertEquals(original.mcpServers, derived.mcpServers)
-        assertEquals(original.enabledSkills, derived.enabledSkills)
+        // G 批 — the ONE field that is never inherited: skills. An expert that declares none
+        // leaves the child with none (CC semantics), even though everything else is the parent's.
+        assertTrue(original.enabledSkills.isNotEmpty())
+        assertTrue(derived.enabledSkills.isEmpty())
         assertEquals(original.coldMemoryDir, derived.coldMemoryDir)
-        assertEquals(original, derived.copy(name = original.name))
+        assertEquals(
+            original,
+            derived.copy(name = original.name, enabledSkills = original.enabledSkills),
+        )
     }
 
     @Test
