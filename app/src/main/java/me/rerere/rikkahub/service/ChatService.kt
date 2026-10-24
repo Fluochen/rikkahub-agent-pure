@@ -2044,7 +2044,7 @@ class ChatService(
                     policyEngine.shouldAutoApproveTool(conversationId, toolName)
                 },
                 onAfterToolExecution = { generatedMessages ->
-                    if (messageRange != null || !settings.enableAutoCompaction) {
+                    if (messageRange != null || !autoCompactionEnabled(settings, conversationId)) {
                         null
                     } else {
                         val actualPromptTokens = generatedMessages.lastOrNull()?.usage
@@ -2652,7 +2652,7 @@ class ChatService(
         if (
             allowContextRetry &&
             messageRange == null &&
-            settings.enableAutoCompaction &&
+            autoCompactionEnabled(settings, conversationId) &&
             generationFailure != null &&
             generationFailure.isContextLimitError() &&
             canRetryAfterContextLimit
@@ -3255,7 +3255,7 @@ class ChatService(
         compactEntireContext: Boolean = false,
     ): CompactedMessageView {
         var view = loadCompactedMessageView(conversation)
-        if (!settings.enableAutoCompaction) {
+        if (!autoCompactionEnabled(settings, conversation.id)) {
             return if (view.compaction?.isAuto == true) {
                 ContextCompactionView.build(conversation, null)
             } else {
@@ -3472,6 +3472,24 @@ class ChatService(
      * nobody published now falls back to the registry entry instead of silently disabling
      * compaction, which is what `model.contextLength == null` used to do.
      */
+    /**
+     * 批 H — 压缩开关在任务会话里强制打开。
+     *
+     * 聊天里关掉自动压缩是合理的：用户看得见上下文，愿意手动整理，也不想被偷偷改写历史。
+     * 任务里关掉是错的：一个跑 8 小时的任务，上下文迟早撑爆窗口，而模型不会自己发现这一点；
+     * 它只会开始在超长上下文里丢细节、重复劳动、忘记验收条件。任务会话是系统自己在跑，
+     * 没有人在旁边手动压——所以这里把「任务会话」当成压缩的强制开启条件。
+     *
+     * 判断走 [MissionSessions]（进程内映射，submit 之前就注册），miss 时不做持久表查询：
+     * 代价是「进程刚重启、还没注册的第一轮」可能仍按设置走，下一轮就正常了。
+     */
+    private fun autoCompactionEnabled(
+        settings: Settings,
+        conversationId: Uuid,
+    ): Boolean = settings.enableAutoCompaction ||
+        me.rerere.rikkahub.service.mission.MissionSessions
+            .missionIdFor(conversationId.toString()) != null
+
     private fun automaticCompactionTriggerTokens(settings: Settings, model: Model): Int? =
         when (settings.autoCompactionThresholdMode) {
             AutoCompactionThresholdMode.PERCENT -> settings.getEffectiveContextLength(model)
