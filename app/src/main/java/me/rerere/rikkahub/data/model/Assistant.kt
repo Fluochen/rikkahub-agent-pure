@@ -197,10 +197,23 @@ data class QuickMessage(
     val content: String = "",
 )
 
+/**
+ * One hot-memory record as the UI sees it.
+ *
+ * [kind] and [validTo] ride along so the memory page can explain itself: a record that stopped
+ * being sent to the model is still listed, and without these two fields the row would look
+ * identical to a live one. Both default, so an old serialized payload still decodes.
+ */
 @Serializable
 data class AssistantMemory(
     val id: Int,
     val content: String = "",
+    /** Wire value of MemoryKind ("preference" / "fact" / "plan" / "state" / "note"). */
+    val kind: String = "note",
+    /** Epoch millis; 0 means the record predates the column. */
+    val createdAt: Long = 0L,
+    /** Non-null = superseded: still shown here, no longer injected into the prompt. */
+    val validTo: Long? = null,
 )
 
 @Serializable

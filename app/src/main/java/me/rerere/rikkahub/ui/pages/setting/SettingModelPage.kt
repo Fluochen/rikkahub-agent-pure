@@ -260,6 +260,23 @@ private fun AutoCompactionSettingItem(
                 )
             },
         )
+        // Costs one extra model call per compaction, so it is a switch rather than a constant.
+        item(
+            headlineContent = {
+                Text(stringResource(R.string.setting_model_page_enable_fact_extraction))
+            },
+            supportingContent = {
+                Text(stringResource(R.string.setting_model_page_enable_fact_extraction_desc))
+            },
+            trailingContent = {
+                Switch(
+                    checked = settings.enableFactExtraction,
+                    onCheckedChange = {
+                        vm.updateSettings { current -> current.copy(enableFactExtraction = it) }
+                    },
+                )
+            },
+        )
         if (settings.enableAutoCompaction) {
             item(
                 headlineContent = {

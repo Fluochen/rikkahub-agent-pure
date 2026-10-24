@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -26,6 +27,7 @@ import me.rerere.rikkahub.data.model.AssistantMemory
 import me.rerere.rikkahub.data.model.Avatar
 import me.rerere.rikkahub.data.model.Tag
 import me.rerere.rikkahub.data.repository.FolderRepository
+import me.rerere.rikkahub.data.repository.MemoryFactRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.subagent.SubAgentArchiveRules
@@ -37,6 +39,7 @@ class AssistantDetailVM(
     private val id: String,
     private val settingsStore: SettingsStore,
     private val memoryRepository: MemoryRepository,
+    private val factRepository: MemoryFactRepository,
     private val filesManager: FilesManager,
     private val skillManager: SkillManager,
     private val workspaceRepository: WorkspaceRepository,
@@ -79,6 +82,21 @@ class AssistantDetailVM(
                 memoryRepository.getMemoriesOfAssistantFlow(assistantId.toString())
             }
         }
+        .stateIn(
+            scope = viewModelScope, started = SharingStarted.Eagerly, initialValue = emptyList()
+        )
+
+    /**
+     * Live facts of this assistant, for the read-only list on the memory page.
+     *
+     * Re-keyed on the assistant so switching to one that uses global memory shows that
+     * assistant's own facts — facts are deliberately not global (they describe the work, not
+     * the persona), which is why this does not branch on `useGlobalMemory` the way memories do.
+     */
+    val facts = assistant
+        .map { it.id.toString() }
+        .distinctUntilChanged()
+        .flatMapLatest { assistantId -> factRepository.liveFactsFlow(assistantId) }
         .stateIn(
             scope = viewModelScope, started = SharingStarted.Eagerly, initialValue = emptyList()
         )
@@ -262,6 +280,13 @@ class AssistantDetailVM(
                 // the editor and saving; don't crash the VM scope, the update is moot.
                 Log.e(TAG, "Failed to update memory #${memory.id}", it)
             }
+        }
+    }
+
+    fun deleteFact(factId: Int) {
+        viewModelScope.launch {
+            runCatching { factRepository.deleteFact(factId) }
+                .onFailure { Log.e(TAG, "Failed to delete fact #$factId", it) }
         }
     }
 

@@ -3,6 +3,7 @@ package me.rerere.rikkahub.data.db.dao
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import kotlinx.coroutines.flow.Flow
 import me.rerere.rikkahub.data.db.entity.MemoryFactEntity
 
 /**
@@ -34,8 +35,22 @@ interface MemoryFactDAO {
     @Insert
     suspend fun insert(fact: MemoryFactEntity): Long
 
+    /** The memory page's read-only list. Live rows only — history stays in the table. */
+    @Query(
+        "SELECT * FROM memory_fact WHERE assistant_id = :assistantId AND valid_to IS NULL " +
+            "ORDER BY valid_from DESC, id DESC"
+    )
+    fun getLiveFactsFlow(assistantId: String): Flow<List<MemoryFactEntity>>
+
     @Query("SELECT COUNT(*) FROM memory_fact WHERE assistant_id = :assistantId AND valid_to IS NULL")
     suspend fun countLive(assistantId: String): Int
+
+    /**
+     * A user-initiated removal is a delete, not an invalidation: the user is saying "this was
+     * never true", and keeping the row would leave it visible in any future history view.
+     */
+    @Query("DELETE FROM memory_fact WHERE id = :id")
+    suspend fun deleteById(id: Int)
 
     /** Used when an assistant's memory is cleared wholesale. */
     @Query("DELETE FROM memory_fact WHERE assistant_id = :assistantId")

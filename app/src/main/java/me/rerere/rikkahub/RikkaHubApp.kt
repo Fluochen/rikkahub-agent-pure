@@ -59,6 +59,17 @@ const val CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID = "chat_live_update"
 const val WEB_SERVER_NOTIFICATION_CHANNEL_ID = "web_server"
 const val FLOATING_BALL_NOTIFICATION_CHANNEL_ID = "floating_ball"
 
+/**
+ * How long a spilled tool result stays readable.
+ *
+ * Long enough that a truncation notice from yesterday still resolves, short enough that the
+ * directory reflects conversations the user still remembers having.
+ */
+private const val TOOL_OUTPUT_RETENTION_MS = 7L * 86_400_000L
+
+/** Hard ceiling for the whole directory; oldest files go first once it is exceeded. */
+private const val TOOL_OUTPUT_MAX_BYTES = 200L * 1024L * 1024L
+
 class RikkaHubApp : Application() {
     override fun onCreate() {
         super.onCreate()
@@ -502,14 +513,41 @@ class RikkaHubApp : Application() {
         }
     }
 
+    /**
+     * Prunes the tool-output spill directory: anything older than [TOOL_OUTPUT_RETENTION_MS],
+     * then oldest-first until the directory fits [TOOL_OUTPUT_MAX_BYTES].
+     *
+     * This used to delete the whole directory on every launch. That was harmless while spilling
+     * only happened with a workspace shell present, but truncation is now the default for every
+     * oversized tool result, and the spill is the *only* way back to the dropped text. Wiping it
+     * at startup turned every truncation notice from a previous session into a dead reference.
+     *
+     * Age rather than "on launch" so a notice stays readable across a restart, and a size cap so
+     * a phone that never reboots still cannot fill its data partition with old command output.
+     */
     private fun cleanupToolOutputs() {
         get<AppScope>().launch(Dispatchers.IO) {
             runCatching {
                 val dir = File(filesDir, FileFolders.TOOL_OUTPUTS)
-                if (dir.exists()) {
-                    dir.deleteRecursively()
+                if (!dir.exists()) return@runCatching
+
+                val now = System.currentTimeMillis()
+                val files = dir.listFiles()?.filter { it.isFile }.orEmpty()
+                files.filter { now - it.lastModified() > TOOL_OUTPUT_RETENTION_MS }
+                    .forEach { it.delete() }
+
+                var total = dir.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L
+                if (total <= TOOL_OUTPUT_MAX_BYTES) return@runCatching
+                val oldestFirst = dir.listFiles()
+                    ?.filter { it.isFile }
+                    ?.sortedBy { it.lastModified() }
+                    .orEmpty()
+                for (file in oldestFirst) {
+                    if (total <= TOOL_OUTPUT_MAX_BYTES) break
+                    val size = file.length()
+                    if (file.delete()) total -= size
                 }
-            }
+            }.onFailure { Log.w(TAG, "tool-output cleanup failed", it) }
         }
     }
 

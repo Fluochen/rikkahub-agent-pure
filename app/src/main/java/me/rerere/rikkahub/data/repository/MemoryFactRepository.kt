@@ -76,6 +76,12 @@ class MemoryFactRepository(
         return FactInjection(facts = live, omitted = (total - live.size).coerceAtLeast(0))
     }
 
+    /** Live facts for the memory page. Read-only: the page does not edit triples. */
+    fun liveFactsFlow(assistantId: String): kotlinx.coroutines.flow.Flow<List<MemoryFactEntity>> =
+        dao.getLiveFactsFlow(assistantId)
+
+    suspend fun deleteFact(id: Int) = dao.deleteById(id)
+
     suspend fun countLive(assistantId: String): Int = dao.countLive(assistantId)
 
     /** Wholesale reset, used when an assistant's memory is cleared. */
