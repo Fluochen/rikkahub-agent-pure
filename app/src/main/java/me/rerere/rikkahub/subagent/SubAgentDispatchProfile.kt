@@ -36,6 +36,9 @@ enum class SubAgentDispatchProfile {
  * @property maxTripsCeiling the upper bound the validator clamps `max_trips` to.
  * @property timeoutCeilingSec the upper bound the validator clamps `timeout_seconds` to.
  * @property descriptionTone which static description template the dispatch tool uses.
+ * @property maxNestingDepth how deep sub-agents may nest (top-level run = depth 0). Derived from
+ *   the same posture knob so the user does not have to learn a second switch; see
+ *   [SubAgentNestingRules.capFor].
  */
 data class DispatchCaps(
     val globalCap: Int,
@@ -44,6 +47,7 @@ data class DispatchCaps(
     val maxTripsCeiling: Int,
     val timeoutCeilingSec: Int,
     val descriptionTone: DescriptionTone,
+    val maxNestingDepth: Int = 0,
 )
 
 enum class DescriptionTone { NEVER, ASSIST, NORMAL, BURST, UNLEASHED }
@@ -67,11 +71,11 @@ object SubAgentDispatchProfileRules {
     fun getLiveDispatchProfile(): SubAgentDispatchProfile = liveProfile
 
     fun caps(profile: SubAgentDispatchProfile): DispatchCaps = when (profile) {
-        SubAgentDispatchProfile.NEVER -> DispatchCaps(0, 0, 0, 0, 0, DescriptionTone.NEVER)
-        SubAgentDispatchProfile.ASSIST -> DispatchCaps(4, 1, 10_000L, 8, 300, DescriptionTone.ASSIST)
-        SubAgentDispatchProfile.NORMAL -> DispatchCaps(30, 3, 30_000L, 30, 1800, DescriptionTone.NORMAL)
-        SubAgentDispatchProfile.BURST -> DispatchCaps(48, 8, 60_000L, 30, 1800, DescriptionTone.BURST)
-        SubAgentDispatchProfile.UNLEASHED -> DispatchCaps(64, 16, 120_000L, 60, 3600, DescriptionTone.UNLEASHED)
+        SubAgentDispatchProfile.NEVER -> DispatchCaps(0, 0, 0, 0, 0, DescriptionTone.NEVER, 0)
+        SubAgentDispatchProfile.ASSIST -> DispatchCaps(4, 1, 10_000L, 8, 300, DescriptionTone.ASSIST, 1)
+        SubAgentDispatchProfile.NORMAL -> DispatchCaps(30, 3, 30_000L, 30, 1800, DescriptionTone.NORMAL, 2)
+        SubAgentDispatchProfile.BURST -> DispatchCaps(48, 8, 60_000L, 30, 1800, DescriptionTone.BURST, 3)
+        SubAgentDispatchProfile.UNLEASHED -> DispatchCaps(64, 16, 120_000L, 60, 3600, DescriptionTone.UNLEASHED, 4)
     }
 
     /**

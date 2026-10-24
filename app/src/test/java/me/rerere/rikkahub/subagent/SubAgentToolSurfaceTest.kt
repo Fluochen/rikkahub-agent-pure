@@ -37,6 +37,23 @@ class SubAgentToolSurfaceTest {
     }
 
     @Test
+    fun `nesting exempts exactly the dispatch handle`() {
+        assertNull(SubAgentToolSurface.denialReason("subagent_dispatch", allowSubagentDispatch = true))
+        assertFalse(SubAgentToolSurface.isDenied("subagent_dispatch", allowSubagentDispatch = true))
+        // Everything else internal stays denied — a child never gets the roster tools or fan-out.
+        assertEquals(
+            "tool_unavailable_headless",
+            SubAgentToolSurface.denialReason("subagent_list", allowSubagentDispatch = true),
+        )
+        assertEquals(
+            "tool_unavailable_headless",
+            SubAgentToolSurface.denialReason("subagent_fanout", allowSubagentDispatch = true),
+        )
+        // Default is still the strict answer.
+        assertEquals("tool_unavailable_headless", SubAgentToolSurface.denialReason("subagent_dispatch"))
+    }
+
+    @Test
     fun `every NO_ALWAYS_ALLOW tool is denied`() {
         assertTrue(ToolApprovalDefaults.NO_ALWAYS_ALLOW.isNotEmpty())
         ToolApprovalDefaults.NO_ALWAYS_ALLOW.forEach { name ->

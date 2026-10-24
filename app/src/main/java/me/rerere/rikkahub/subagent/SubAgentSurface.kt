@@ -41,12 +41,16 @@ import kotlin.uuid.Uuid
  * namespace still gets a derived child assistant, and every tool on it still passes through the
  * headless floor in [apply].
  *
- * ## Off by default, byte-identical when off
+ * ## Every sub-agent run has a record (G 批)
  *
- * No record is written unless the definition defines a surface ([resolveChildAssistant] returns
- * non-null) or the parent assistant has `enableSubAgentToolSurface` on ([SubAgentEngine]). With no
- * record, [apply] returns the **same `List<Tool>` instance** and [assistantFor] returns null, so an
- * install that configures neither sends exactly the tool schemas it sent before P2-04.
+ * Until G, a record was written only when the expert defined a surface or the parent had
+ * `enableSubAgentToolSurface` on. With no record the child inherited the parent's COMPLETE tool
+ * list — `ask_user`, the per-call-approval tools, everything — and headless auto-approve ran them
+ * unattended. The engine now freezes unconditionally, so the floor always applies; the record also
+ * carries whether this child may itself dispatch (nesting depth permitting).
+ *
+ * Conversations that were never frozen still get the **same `List<Tool>` instance** back from
+ * [apply] — the identity contract is unchanged.
  */
 object SubAgentSurface {
 
@@ -110,6 +114,13 @@ object SubAgentSurface {
     data class FrozenSurface(
         val assistant: Assistant?,
         val requested: Set<String>?,
+        /**
+         * G 批 — whether this child may itself dispatch (`subagent_dispatch` survives the floor).
+         *
+         * False by default: a child is one level deep, and whether it gets to spawn is decided by
+         * the parent run's depth against [SubAgentNestingRules.capFor] at freeze time.
+         */
+        val allowSubagentDispatch: Boolean = false,
     )
 
     private val frozen = ConcurrentHashMap<Uuid, FrozenSurface>()
@@ -123,10 +134,12 @@ object SubAgentSurface {
         conversationId: Uuid,
         assistant: Assistant? = null,
         requested: Collection<String>? = null,
+        allowSubagentDispatch: Boolean = false,
     ): FrozenSurface {
         val surface = FrozenSurface(
             assistant = assistant,
             requested = requested?.filterNot { it.isBlank() }?.toSet()?.takeIf { it.isNotEmpty() },
+            allowSubagentDispatch = allowSubagentDispatch,
         )
         frozen[conversationId] = surface
         return surface
@@ -165,7 +178,8 @@ object SubAgentSurface {
         val surface = frozenFor(conversationId) ?: return tools
         val requested = surface.requested
         val kept = tools.filter { tool ->
-            !SubAgentToolSurface.isDenied(tool.name) && (requested == null || tool.name in requested)
+            !SubAgentToolSurface.isDenied(tool.name, surface.allowSubagentDispatch) &&
+                (requested == null || tool.name in requested)
         }
         // Nothing to remove -> hand back the original instance so identity stays observable
         // instead of silently producing an equal-but-new list.

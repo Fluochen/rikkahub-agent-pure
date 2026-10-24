@@ -75,6 +75,11 @@ fun subagentDispatchTool(
                   reply, so a run that stops on a tool call returns nothing.
                 - Pass a short label so the user can recognise the running sub-agent.
 
+                NESTING — a sub-agent may dispatch its own children while its depth is under the
+                posture cap (ASSIST 1 / NORMAL 2 / BURST 3 / UNLEASHED 4; depth 0 is the user's own
+                conversation). If a dispatch comes back with `recursion_depth`, finish that level
+                inline instead of trying to work around it.
+
                 BUDGETS — size them to the task:
                 - timeout_seconds: default ${SubAgentDefaults.DEFAULT_TIMEOUT_SECONDS}s foreground,
                   ${SubAgentDefaults.DEFAULT_BACKGROUND_TIMEOUT_SECONDS}s when run_in_background=true;
@@ -299,14 +304,16 @@ fun subagentDispatchTool(
         },
         needsApproval = { true },
         execute = { args ->
-            // Hard recursion guard — refuse the dispatch if the caller is itself a headless
-            // run (cron / workflow / external-automation / another sub-agent). The engine's
-            // own guard relies on a registered conversation id; cron / workflow direct-mode
-            // paths have no conversation so the engine guard wouldn't fire there. Catch it here.
-            if (callerContext.isHeadless) {
+            // Nesting guard (G 批) — a headless caller is only allowed to dispatch when it has a
+            // conversation, because that is the only thing that can be looked up in the depth
+            // table. Headless callers WITHOUT a conversation (cron / workflow direct mode) have no
+            // "level" at all, so they are refused here; the engine then applies the depth cap for
+            // real sub-agent parents. A caller that lies about `isHeadless` still hits the engine.
+            if (callerContext.isHeadless && callerContext.callerConversationId == null) {
                 return@Tool errEnv(
                     "no_recursion",
-                    "sub-agent dispatch is not allowed from inside a headless run (cron / workflow / sub-agent / external automation). Run the work inline instead.",
+                    "sub-agent dispatch from a headless run without a conversation is not allowed " +
+                        "(cron / workflow / external automation). Run the work inline instead.",
                 )
             }
             val params = args.jsonObject

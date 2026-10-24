@@ -29,6 +29,7 @@ internal fun encodeRun(run: SubAgentRun, budgetRemaining: Long? = null): JsonObj
     put("status", run.status.name)
     put("label", run.label)
     if (run.conversationId != null) put("conversation_id", run.conversationId)
+    if (run.depth > 0) put("depth", run.depth)
     if (run.agentName != null) put("agent", run.agentName)
     if (run.resumedFrom != null) put("resumed_from", run.resumedFrom)
     if (run.modelId != null) put("model_id", run.modelId)

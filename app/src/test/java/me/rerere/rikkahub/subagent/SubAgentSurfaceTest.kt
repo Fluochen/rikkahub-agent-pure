@@ -278,6 +278,23 @@ class SubAgentSurfaceTest {
     }
 
     @Test
+    fun `a nested child keeps dispatch and loses the other handles`() {
+        val conversation = Uuid.random()
+        SubAgentSurface.freeze(conversation, allowSubagentDispatch = true)
+        val tools = listOf(
+            tool("search_web"),
+            tool("subagent_dispatch"),
+            tool("subagent_fanout"),
+            tool("subagent_list"),
+            tool("ask_user"),
+        )
+        assertEquals(
+            listOf("search_web", "subagent_dispatch"),
+            namesOf(SubAgentSurface.apply(conversation, tools)),
+        )
+    }
+
+    @Test
     fun `a frozen conversation with nothing to remove still gets the original instance`() {
         val conversation = Uuid.random()
         SubAgentSurface.freeze(conversation, requested = listOf("search_web"))
