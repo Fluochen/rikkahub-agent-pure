@@ -119,6 +119,29 @@ class ChatServiceRunService(
         )
         ConversationRunRegistry.bind(conv.id, runId, request.kind.wire)
 
+        // P6 — 子运行的工具面必须在派发**之前**冻结：`sendMessage` 里就会装配工具，晚一步
+        // 子代理拿到的还是父助手的整套权限（写记忆、递归派发）。
+        request.surfaceAssistant?.let { child ->
+            runCatching {
+                me.rerere.rikkahub.subagent.SubAgentSurface.freeze(
+                    conversationId = conv.id,
+                    assistant = child,
+                    allowSubagentDispatch = false,
+                )
+            }
+        }
+        // 派发出来的子运行要能被用量账本归集到父 run 名下（否则 UsageLedger 里这一笔没有
+        // runId / parentRunId，既算不进编排树，也算不进预算）。
+        if (request.kind == AgentRunKind.SubAgent) {
+            runCatching {
+                me.rerere.rikkahub.runtime.usage.UsageRunContexts.mark(
+                    conversationId = conv.id.toString(),
+                    runId = runId,
+                    parentRunId = request.parentRunId,
+                )
+            }
+        }
+
         val handle = RunHandle(
             id = runId,
             conversationId = conv.id,
@@ -288,6 +311,8 @@ class ChatServiceRunService(
 
     /** Post-run cleanup: release the surface marks, settle the ledger, journal the outcome. */
     private suspend fun settleTerminal(handle: RunHandle, result: RunResult) {
+        // 冻结记录是进程内的 map，按会话存；不释放就跟着进程活到下次重启。
+        runCatching { me.rerere.rikkahub.subagent.SubAgentSurface.release(handle.conversationId) }
         runCatching { HeadlessConversations.unmark(handle.conversationId) }
         runCatching { ConversationSystemAddendum.clear(handle.conversationId) }
         ConversationRunRegistry.unbind(handle.conversationId)

@@ -1799,6 +1799,7 @@ class ChatService(
                     conversationId = conversationId,
                     missionIdProvider = { runCatching { missionEngine.missionIdFor(conversationId.toString()) }.getOrNull() },
                     definitions = localTools.expertDefinitionsBlocking(),
+                    parentAssistant = surfaceAssistant,
                 )
             )
         }
@@ -2362,6 +2363,7 @@ class ChatService(
                     conversationId = conversationId,
                     missionIdProvider = { runCatching { missionEngine.missionIdFor(conversationId.toString()) }.getOrNull() },
                     definitions = localTools.expertDefinitionsBlocking(),
+                    parentAssistant = surfaceAssistant,
                 )
             )
         }

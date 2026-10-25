@@ -49,6 +49,12 @@ fun createMissionDispatchTools(
      * exactly as before this parameter existed.
      */
     definitions: List<AgentDefinition> = emptyList(),
+    /**
+     * 调用方（父助手）本身。用来把专家定义合成「子运行自己的工具面」——只取
+     * systemPrompt / modelId 是不够的：专家的 localTools / mcpServers / skills 全是能力面，
+     * 忽略它们等于让子任务顶着专家的名字拿父助手的全部权限。
+     */
+    parentAssistant: me.rerere.rikkahub.data.model.Assistant? = null,
 ): List<Tool> = listOf(
     Tool(
         name = "mission_dispatch",
@@ -150,6 +156,9 @@ fun createMissionDispatchTools(
                     is MissionExpert.Inherit -> null
                     is MissionExpert.Resolved -> resolution.definition
                 }
+                // 专家能力面：有就冻结给这个子运行，没有（专家只挑了模型/提示词）就继承父助手。
+                val childSurface = me.rerere.rikkahub.subagent.SubAgentSurface
+                    .resolveChildAssistant(parentAssistant, expert)
                 RunRequest(
                     assistantId = assistantId,
                     prompt = prompt,
@@ -159,6 +168,7 @@ fun createMissionDispatchTools(
                     // 派发出来的永远是子代理，kind 不接受模型输入（见 schema 处的说明）。
                     kind = AgentRunKind.SubAgent,
                     systemPrompt = expert?.systemPrompt?.takeIf { it.isNotBlank() },
+                    surfaceAssistant = childSurface,
                     modelId = expert?.modelId?.let { raw -> runCatching { Uuid.parse(raw) }.getOrNull() },
                 )
             }
