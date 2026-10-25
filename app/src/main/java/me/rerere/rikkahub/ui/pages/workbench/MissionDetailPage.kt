@@ -210,7 +210,7 @@ fun MissionDetailPage(missionId: String) {
                             )
                             DropdownMenuItem(
                                 text = { Text(text = stringResource(R.string.mission_menu_fork)) },
-                                leadingIcon = { Icon(HugeIcons.Route, contentDescription = null) },
+                                leadingIcon = { Icon(HugeIcons.Copy01, contentDescription = null) },
                                 onClick = {
                                     menuExpanded = false
                                     showForkDialog = true
