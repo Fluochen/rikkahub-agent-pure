@@ -3140,12 +3140,14 @@ class ChatService(
      * configured. Observation state is drained first, so a retried turn cannot double-write.
      */
     private suspend fun flushAutomationPlaybook(assistant: Assistant) {
-        val snapshots = AutomationRecorder.drain()
-        if (snapshots.isEmpty()) return
+        // 先判定「这些观测有没有地方可写」，再 drain。反过来写就是：任何一个轮次结束都把
+        // 全部观测取走，若这一个助手没开冷记忆就直接丢掉——观测没了，别人的轮次也拿不到。
         if (!assistant.coldMemoryEnabled) return
         val workspaceId = assistant.workspaceId?.toString() ?: return
         val dir = ColdMemoryRules.normalizeDir(assistant.coldMemoryDir) ?: return
         if (workspaceRepository.getById(workspaceId) == null) return
+        val snapshots = AutomationRecorder.drain()
+        if (snapshots.isEmpty()) return
 
         for (snapshot in snapshots) {
             val fileName = AppPlaybookRules.fileNameFor(snapshot.packageName) ?: continue
@@ -3890,6 +3892,18 @@ class ChatService(
             val enabled = runCatching { settingsStore.settingsFlow.first().enableFactExtraction }
                 .getOrDefault(false)
             if (!enabled) return@launch
+            // 只读子代理会话不写事实库：那是别人的上下文，写进来会污染助手的长期记忆。
+            if (runCatching { me.rerere.rikkahub.subagent.SubAgentSurface.frozenFor(compaction.conversationId) }
+                    .getOrNull() != null
+            ) {
+                return@launch
+            }
+            // 助手自己关掉了记忆：全局开关开着也不提取。
+            val owner = runCatching {
+                val ownerId = getConversationFlow(compaction.conversationId).value.assistantId
+                settingsStore.settingsFlow.first().assistants.firstOrNull { it.id == ownerId }
+            }.getOrNull()
+            if (owner != null && !owner.enableMemory) return@launch
             runCatching {
                 factExtractor.extract(
                     assistantId = assistantId,

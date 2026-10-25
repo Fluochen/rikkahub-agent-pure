@@ -450,7 +450,10 @@ class SubAgentEngine(
         // generations on one conversation — interleaved history, two tool loops, twice the bill.
         // tryLock rather than lock: the second caller should be told, not queued behind a run that
         // may last minutes.
-        val lock = resumeLocks.computeIfAbsent(runId) { Mutex() }
+        // 锁的键必须是**会话**，不是 runId：`subagent_send` 每次都会生成新的 runId 却复用同一个
+        // conversationId，按 runId 加锁时两个并发追加各自拿到一把锁，然后在同一段历史上
+        // 同时跑两个生成循环。
+        val lock = resumeLocks.computeIfAbsent(previous.conversationId ?: runId) { Mutex() }
         if (!lock.tryLock()) {
             return DispatchResult.Reject("already_running", "another resume is already in flight for run $runId")
         }

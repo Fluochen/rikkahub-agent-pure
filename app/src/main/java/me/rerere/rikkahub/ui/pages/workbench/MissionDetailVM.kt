@@ -409,13 +409,7 @@ class MissionDetailVM(
      * cannot be resolved (deleted workspace, oversized file, unreadable content).
      */
     suspend fun loadArtifactText(path: String): String? = try {
-        val workspaceId = resolveWorkspaceId() ?: return null
-        val size = workspaceRepository.rootfsFileSize(workspaceId, path)
-        if (size > MAX_ARTIFACT_READ_BYTES) return null
-        ByteArrayOutputStream().use { out ->
-            workspaceRepository.exportRootfsFile(workspaceId, path, out)
-            out.toString(Charsets.UTF_8.name())
-        }
+        readArtifactBytes(path)?.toString(Charsets.UTF_8)
     } catch (e: Exception) {
         null
     }
@@ -425,15 +419,40 @@ class MissionDetailVM(
      * FileProvider share intent. Best-effort; null when the file cannot be read.
      */
     suspend fun exportArtifactToCache(path: String, cacheDir: File): File? = try {
-        val workspaceId = resolveWorkspaceId() ?: return null
+        val bytes = readArtifactBytes(path) ?: return null
         val dir = File(cacheDir, "artifact_share").apply { mkdirs() }
         val file = File(dir, path.substringAfterLast('/').ifBlank { "artifact" })
-        file.outputStream().use { out ->
-            workspaceRepository.exportRootfsFile(workspaceId, path, out)
-        }
+        file.writeBytes(bytes)
         file
     } catch (e: Exception) {
         null
+    }
+
+    /**
+     * 按「先工作区 Rootfs、再宿主文件」的顺序取产物字节。
+     *
+     * 产物表里同时有两类路径：工作区工具写的是 Rootfs 内的绝对路径，而 `write_text_file`
+     * 写的是宿主路径（`~/…` 或 `/sdcard/…`）。以前这里只走 `rootfsFileSize` /
+     * `exportRootfsFile`，于是后者在详情页点预览或分享永远返回 null。
+     */
+    private suspend fun readArtifactBytes(path: String): ByteArray? {
+        val workspaceId = resolveWorkspaceId()
+        if (workspaceId != null && path.startsWith("/")) {
+            val fromRootfs = runCatching {
+                val size = workspaceRepository.rootfsFileSize(workspaceId, path)
+                if (size < 0L || size > MAX_ARTIFACT_READ_BYTES) return@runCatching null
+                ByteArrayOutputStream().use { out ->
+                    workspaceRepository.exportRootfsFile(workspaceId, path, out)
+                    out.toByteArray()
+                }
+            }.getOrNull()
+            if (fromRootfs != null) return fromRootfs
+        }
+        val host = runCatching {
+            File(me.rerere.rikkahub.data.ai.tools.local.AgentWorkspace.expand(path))
+        }.getOrNull() ?: return null
+        if (!host.isFile || host.length() > MAX_ARTIFACT_READ_BYTES) return null
+        return host.readBytes()
     }
 
     /** Resolve the workspace bound to the mission, if any. */

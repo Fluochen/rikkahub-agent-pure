@@ -19,6 +19,8 @@ import kotlin.uuid.Uuid
 class AssistantVM(
     private val settingsStore: SettingsStore,
     private val memoryRepository: MemoryRepository,
+    /** 删助手时一起清掉它的事实库：`memory_fact` 没有外键，不清就永远留在库里。 */
+    private val factRepository: me.rerere.rikkahub.data.repository.MemoryFactRepository,
     private val conversationRepo: ConversationRepository,
     private val filesManager: FilesManager,
 ) : ViewModel() {
@@ -75,6 +77,7 @@ class AssistantVM(
                 )
             )
             memoryRepository.deleteMemoriesOfAssistant(assistant.id.toString())
+            runCatching { factRepository.clear(assistant.id.toString()) }
             conversationRepo.deleteConversationOfAssistant(assistant.id)
         }
     }
