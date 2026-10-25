@@ -210,6 +210,7 @@ class ChatServiceRunService(
         // that is about to continue, and RUN_FINISHED would tell the supervisor the round ended.
         var parked = false
         try {
+            val failuresBefore = chatService.generationFailureCount(handle.conversationId)
             val completed = watchRound(handle, throughApprovals)
             if (completed == null) {
                 parked = true
@@ -225,7 +226,16 @@ class ChatServiceRunService(
             // of its work already ("timeout != no work"), and that partial output is exactly what
             // an orchestrating caller needs in order to decide what to salvage.
             val finalText = lastAssistantText(handle.conversationId)
-            result = if (completed) {
+            result = if (completed && chatService.generationFailureCount(handle.conversationId) > failuresBefore) {
+                // 生成「正常结束」了，但这一轮是被 API/网络错误中断的。记成成功会让断点被删、
+                // AFTER_FAILURE 钩子不跑、任务带着半截产物进入 DONE —— 按失败结算。
+                RunResult(
+                    RunStatus.FAILED,
+                    handle.conversationId,
+                    "generation aborted by an error",
+                    finalText = finalText,
+                )
+            } else if (completed) {
                 RunResult(RunStatus.COMPLETED, handle.conversationId, finalText = finalText)
             } else {
                 // Timeout — stop the runaway generation before reporting.

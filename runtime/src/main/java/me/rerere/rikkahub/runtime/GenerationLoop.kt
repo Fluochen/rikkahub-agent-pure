@@ -62,6 +62,18 @@ import java.io.IOException
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
+/**
+ * 传给 `onToolExecuted` 的输出摘要 —— **只取文本部分**。
+ *
+ * 这里以前传的是 `result.toString()`，即 `[Text(text={"error":...}, metadata=null)]`。
+ * `ToolFailureClassifier` 认的是 `{` 开头的 envelope，于是生产环境里它永远返回 null：
+ * 工具失败不进任务时间线、不参与返工提示，任务详情里看到的也全是这种调试字符串。
+ */
+private fun toolResultSummary(parts: List<UIMessagePart>): String =
+    parts.filterIsInstance<UIMessagePart.Text>()
+        .joinToString("\n") { it.text }
+        .take(500)
+
 private const val TAG = "GenerationHandler"
 private const val MAX_TOOL_OUTPUT_CHARS = 32 * 1024
 private const val TOOL_OUTPUT_PREVIEW_CHARS = 4 * 1024
@@ -977,7 +989,17 @@ class GenerationLoop(
                         // Flatten this turn's executed tool calls in chronological order. The
                         // epoch ms (for the freshness-TTL bypass) comes from the parent
                         // message's finish/create time, matching the prior inline behaviour.
-                        val priorCalls = turnSlice.flatMap { msg ->
+                        // 同一步（同一个 step）里已经跑完的调用也要算进来：executedTools 要到
+                        // forEach 结束才并回 messages，只看 messages 的话，模型在同一步里并发
+                        // 撒三次同样的调用可以完全绕过 LoopGuard。
+                        val sameStepCalls = executedTools.map { done ->
+                            PriorToolCall(
+                                toolName = done.toolName,
+                                signature = done.toolName + "::" + done.input,
+                                epochMs = System.currentTimeMillis(),
+                            )
+                        }
+                        val priorCalls = sameStepCalls + turnSlice.flatMap { msg ->
                             val epochMs = (msg.finishedAt ?: msg.createdAt)
                                 .toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
                             msg.parts.filterIsInstance<UIMessagePart.Tool>()
@@ -1065,6 +1087,14 @@ class GenerationLoop(
                                     )
                                 )
                             )
+                            // 失败也要让任务时间线看到结果：只有 TOOL_CALL 没有 TOOL_RESULT 时，督导与工具失败
+                            // 分类器都会把这一步当成「没发生过」。
+                            onToolExecuted?.let { hook ->
+                                runCatching {
+                                    hook(tool.toolName, tool.input, toolResultSummary(executedTools.lastOrNull()?.output.orEmpty()))
+                                }
+                            }
+
                             return@forEach
                         }
                         // Resolve the tool def BEFORE the runCatching block, same reason as
@@ -1095,6 +1125,14 @@ class GenerationLoop(
                                     )
                                 )
                             )
+                            // 失败也要让任务时间线看到结果：只有 TOOL_CALL 没有 TOOL_RESULT 时，督导与工具失败
+                            // 分类器都会把这一步当成「没发生过」。
+                            onToolExecuted?.let { hook ->
+                                runCatching {
+                                    hook(tool.toolName, tool.input, toolResultSummary(executedTools.lastOrNull()?.output.orEmpty()))
+                                }
+                            }
+
                             return@forEach
                         }
                         runCatching {
@@ -1174,7 +1212,7 @@ class GenerationLoop(
                             )
                             onToolExecuted?.let { hook ->
                                 runCatching {
-                                    hook(markedTool.toolName, markedTool.input, result.toString().take(500))
+                                    hook(markedTool.toolName, markedTool.input, toolResultSummary(result))
                                 }
                             }
                         }.onFailure {
@@ -1220,6 +1258,14 @@ class GenerationLoop(
                                     )
                                 )
                             )
+                            // 失败也要让任务时间线看到结果：只有 TOOL_CALL 没有 TOOL_RESULT 时，督导与工具失败
+                            // 分类器都会把这一步当成「没发生过」。
+                            onToolExecuted?.let { hook ->
+                                runCatching {
+                                    hook(tool.toolName, tool.input, toolResultSummary(executedTools.lastOrNull()?.output.orEmpty()))
+                                }
+                            }
+
                         }
                     }
                 }

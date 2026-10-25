@@ -240,6 +240,9 @@ class MissionEngine(
             val missionId = missionIdFor(conversationId)
             val runId = runIdFor(conversationId, missionId)
 
+            // 失败归因先算一次：既写进 (a) 的 payload，也决定 (b) 要不要记产物。
+            val failure = me.rerere.rikkahub.runtime.tools.ToolFailureClassifier.detect(outputJson)
+
             // (a) TOOL_RESULT — unconditional, one row per tool execution.
             runEventRepository.emit(
                 type = RunEventType.TOOL_RESULT,
@@ -251,7 +254,6 @@ class MissionEngine(
                         put("args", argsJson.take(500))
                         // 批 I — 失败归因：分类结果进 payload，供督导统计与下一轮交接使用。
                         // 分类函数是纯文本判定，认不出来就是 null，不影响事件本身的写入。
-                        val failure = me.rerere.rikkahub.runtime.tools.ToolFailureClassifier.detect(outputJson)
                         if (failure != null) {
                             put("failed", true)
                             put("failureKind", failure.kind.name)
@@ -268,6 +270,9 @@ class MissionEngine(
             // with change metadata (diff summary) so the workbench can render a review
             // view without re-reading files (batch 1: delivery closure).
             if (toolName !in ARTIFACT_TOOLS) return@runCatching
+            // 失败的写入不是产物：以前这里只看工具名，一次 path_blocked / 权限错误也会在
+            // 任务详情里挂出一个「已产出」的文件，用户点开却什么都没有。
+            if (failure != null) return@runCatching
             val path = parsePath(argsJson) ?: return@runCatching
             val boundMissionId = missionId ?: return@runCatching
             val change = computeArtifactChange(toolName, argsJson)
@@ -415,7 +420,9 @@ class MissionEngine(
             val element = json.parseToJsonElement(argsJson.ifBlank { "{}" }) as? JsonObject ?: return null
             when (toolName) {
                 "workspace_write_file", "write_text_file" -> {
-                    val text = element["text"]?.jsonPrimitive?.content.orEmpty()
+                    // write_text_file 的参数名是 `content`（workspace_write_file 是 `text`）：
+                    // 只读 text 会让 write_text_file 的 linesAdded 永远算成 0。
+                    val text = (element["content"] ?: element["text"])?.jsonPrimitive?.content.orEmpty()
                     ArtifactChange(
                         changeType = "created",
                         linesAdded = text.count { it == '\n' } + if (text.isNotBlank()) 1 else 0,
