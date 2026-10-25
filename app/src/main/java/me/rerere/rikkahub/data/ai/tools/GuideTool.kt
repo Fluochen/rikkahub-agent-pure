@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.ai.tools
 
-import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -57,7 +58,7 @@ fun moxwGuideTool(): Tool = Tool(
                         put("description", "Chapter id from the table of contents. Omit for the index.")
                         put(
                             "enum",
-                            buildJsonArray { AgentGuide.ALL.forEach { add(it.id) } },
+                            JsonArray(AgentGuide.ALL.map { JsonPrimitive(it.id) }),
                         )
                     },
                 )

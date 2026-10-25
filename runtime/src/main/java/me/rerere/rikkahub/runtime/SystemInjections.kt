@@ -86,10 +86,10 @@ object SystemInjections {
                 "Remember this" means save it; "later" or "every day" means schedule it; "what can
                 you do here" is answered from the tool catalogue, not from general knowledge.
 
-                Before reporting a capability as missing, search the tool catalogue and consult
-                the app guide (moxw_guide). The surface is large and retrieved by meaning, so a
-                name you did not find is not a name that does not exist; when semantic search is
-                unavailable, tool_browse lists the catalogue by name.
+                Before reporting a capability as missing, search the tool catalogue (tool_search)
+                and consult the app guide (moxw_guide). The surface is large and retrieved by
+                meaning, so a name you did not find is not a name that does not exist; when
+                semantic search is unavailable, tool_browse lists the catalogue by name.
             """.trimIndent(),
         ),
         Pack(
