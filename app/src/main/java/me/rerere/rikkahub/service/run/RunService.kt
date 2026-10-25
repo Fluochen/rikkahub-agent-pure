@@ -93,6 +93,12 @@ data class RunRequest(
     val domainId: String? = null,
     /** Set when this run was dispatched by another run (P6 orchestration). */
     val parentRunId: String? = null,
+    /**
+     * 子运行自己的工具面（专家能力面）。非空时 [me.rerere.rikkahub.service.run.ChatServiceRunService]
+     * 在建好会话、派发之前冻结它——顺序和「先绑定任务再派发」同一个道理：工具面是在
+     * `sendMessage` 里装配的，冻结晚一步就等于没冻结。
+     */
+    val surfaceAssistant: me.rerere.rikkahub.data.model.Assistant? = null,
     /** Optional per-run step cap for the loop; null keeps the global default. */
     val maxSteps: Int? = null,
     /**
