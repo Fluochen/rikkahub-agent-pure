@@ -126,6 +126,8 @@ fun MissionDetailPage(missionId: String) {
     var showReworkDialog by remember { mutableStateOf(false) }
     var showSnapshotsDialog by remember { mutableStateOf(false) }
     var showChecksDialog by remember { mutableStateOf(false) }
+    // 批 I — 分叉
+    var showForkDialog by remember { mutableStateOf(false) }
 
     // 批 F — 回退结果（成功/失败）用 toast 报一次，然后清掉。
     val rollbackMessage by vm.rollbackMessage.collectAsStateWithLifecycle()
@@ -133,6 +135,15 @@ fun MissionDetailPage(missionId: String) {
         rollbackMessage?.let {
             toaster.show(it)
             vm.clearRollbackMessage()
+        }
+    }
+
+    // 批 I — 分叉结果：成功/失败都用 toast 报一次。
+    val forkOutcome by vm.forkOutcome.collectAsStateWithLifecycle()
+    LaunchedEffect(forkOutcome) {
+        forkOutcome?.let {
+            toaster.show(it.message)
+            vm.clearForkOutcome()
         }
     }
 
@@ -195,6 +206,14 @@ fun MissionDetailPage(missionId: String) {
                                 onClick = {
                                     menuExpanded = false
                                     showLimitsDialog = true
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(text = stringResource(R.string.mission_menu_fork)) },
+                                leadingIcon = { Icon(HugeIcons.Route, contentDescription = null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    showForkDialog = true
                                 },
                             )
                             DropdownMenuItem(
@@ -599,6 +618,17 @@ fun MissionDetailPage(missionId: String) {
 
     if (showSnapshotsDialog) {
         SnapshotDialog(vm = vm, onDismiss = { showSnapshotsDialog = false })
+    }
+
+    // 批 I — 分叉：复制当前产物到一个新工作区，另起一个任务走另一条路。
+    if (showForkDialog) {
+        ForkDialog(
+            onDismiss = { showForkDialog = false },
+            onConfirm = { instruction ->
+                showForkDialog = false
+                vm.fork(instruction)
+            },
+        )
     }
 
     if (showChecksDialog) {
@@ -1638,6 +1668,55 @@ private fun ChecksDialog(
                 },
             ) {
                 Text(text = stringResource(R.string.mission_limits_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(R.string.cancel))
+            }
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// 批 I — 分叉对话框
+// ---------------------------------------------------------------------------
+
+/**
+ * 分叉前的最后一步：问一句「另一条路是什么」。
+ *
+ * 允许留空——用户可能只是想复制一份去手动改。但填了就会进新任务的目标（每轮都注入），
+ * 而不是只做一次性提示。
+ */
+@Composable
+private fun ForkDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var instruction by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(R.string.mission_fork_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = stringResource(R.string.mission_fork_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = instruction,
+                    onValueChange = { instruction = it },
+                    label = { Text(text = stringResource(R.string.mission_fork_instruction)) },
+                    minLines = 2,
+                    maxLines = 5,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(instruction) }) {
+                Text(text = stringResource(R.string.mission_fork_confirm))
             }
         },
         dismissButton = {
