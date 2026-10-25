@@ -3899,7 +3899,10 @@ class ChatService(
                 return@launch
             }
             // 助手自己关掉了记忆：全局开关开着也不提取。
-            val owner = runCatching { assistantFor(compaction.conversationId) }.getOrNull()
+            val owner = runCatching {
+                val ownerId = getConversationFlow(compaction.conversationId).value.assistantId
+                settingsStore.settingsFlow.first().assistants.firstOrNull { it.id == ownerId }
+            }.getOrNull()
             if (owner != null && !owner.enableMemory) return@launch
             runCatching {
                 factExtractor.extract(
