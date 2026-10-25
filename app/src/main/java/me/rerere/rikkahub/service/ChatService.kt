@@ -1739,7 +1739,7 @@ class ChatService(
                 ),
             )
         )
-        addAll(createWorkspaceToolsIfReady(surfaceAssistant.workspaceId?.toString(), conversation.workspaceCwd))
+        addAll(createWorkspaceToolsIfReady(workspaceIdForTurn(surfaceAssistant, conversationId), conversation.workspaceCwd))
         // T-06 / (7) - cold memory (Markdown knowledge base). Same on both build paths so a
         // regenerate sees the surface the first pass had. Off unless enabled AND configured.
         addAll(createColdMemoryToolsIfConfigured(surfaceAssistant))
@@ -2076,6 +2076,10 @@ class ChatService(
                 Log.w(TAG, "fact injection failed; sending no facts this turn", error)
                 FactInjection(emptyList(), omitted = 0)
             }
+            // 任务会话的系统提示必须指向任务工作区（与工具、验收同一本账）。
+            val missionWorkspaceIdForContext = runCatching {
+                missionEngine.workspaceIdFor(conversationId.toString())
+            }.getOrNull()
             generationLoop.generateText(
                 settings = settings.toLoopSettings(),
                 model = model,
@@ -2227,6 +2231,7 @@ class ChatService(
                         conversationLorebookIds = conversation.lorebookIds,
                         processingStatus = session.processingStatus,
                         workspaceCwd = conversation.workspaceCwd,
+                        missionWorkspaceId = missionWorkspaceIdForContext,
                     )
                 },
                 outputTransform = { msgs ->
@@ -2292,7 +2297,7 @@ class ChatService(
                     // options did not already allow. There is no other mode: nothing attaches the
                     // whole surface, which is what makes the embedding model a prerequisite rather
                     // than an enhancement.
-                    addAll(createWorkspaceToolsIfReady(surfaceAssistant.workspaceId?.toString(), conversation.workspaceCwd))
+                    addAll(createWorkspaceToolsIfReady(workspaceIdForTurn(surfaceAssistant, conversationId), conversation.workspaceCwd))
                     // T-06 / (7) - cold memory, mirroring the regenerate path above.
                     addAll(createColdMemoryToolsIfConfigured(surfaceAssistant))
                     // The recovery path for a truncated tool result, mirrored from the
@@ -2915,6 +2920,19 @@ class ChatService(
             }
         }
     }
+
+    /**
+     * 本轮该用哪个工作区：**任务会话用任务自己的工作区**，其余才用助理绑定的。
+     *
+     * 任务的快照、hook、机器验收（MissionAcceptanceVerifier）、产物预览全部按
+     * `mission.workspaceId` 查找。工具面却只看 `assistant.workspaceId`，于是两种错法：
+     * 助理没绑工作区时任务轮次根本没有 workspace_* 工具；绑了 A 而任务是 B 时，模型在 A 里
+     * 读写执行，系统在 B 里验收，永远对不上。
+     */
+    private suspend fun workspaceIdForTurn(assistant: Assistant, conversationId: Uuid): String? =
+        runCatching { missionEngine.workspaceIdFor(conversationId.toString()) }.getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: assistant.workspaceId?.toString()
 
     private suspend fun createWorkspaceToolsIfReady(workspaceId: String?, cwd: String? = null): List<Tool> {
         if (workspaceId.isNullOrBlank()) return emptyList()

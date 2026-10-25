@@ -28,6 +28,19 @@ class MissionHookOutcomeTest {
         assertFalse(o.blocking)
     }
 
+    /**
+     * The shape the production hook shell now produces when a workspace has no Linux rootfs:
+     * `ProotShellRunner` returns 127 instead of throwing, so the exit code alone looks like a
+     * failed command. [DataSourceModule] translates that into `error`, which is what keeps an
+     * uninstalled rootfs from failing every acceptance check and parking the mission forever.
+     */
+    @Test
+    fun `a missing rootfs is an infrastructure error, not a failed check`() {
+        val o = outcome(HookResult(exitCode = 127, stderr = "Rootfs is not installed", error = "Rootfs is not installed"))
+        assertFalse(o.failed)
+        assertFalse(o.blocking)
+    }
+
     @Test
     fun `a real non-zero exit is a verdict`() {
         val o = outcome(HookResult(exitCode = 1, stderr = "2 failed"))

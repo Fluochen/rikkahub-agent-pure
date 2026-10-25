@@ -153,10 +153,14 @@ private fun err(code: String, detail: String): List<UIMessagePart> =
     }.toString()))
 
 /**
- * Resolve a webview URL emitted by a JS skill. Absolute URIs (http/https/file/data) pass
- * through unchanged. Relative paths are resolved against the script file's parent
- * directory, rewritten to `file://` URIs, and verified to stay inside [skillDir] (path
- * traversal defence). Returns null if the resolved path escapes the skill dir.
+ * Resolve a webview URL emitted by a JS skill.
+ *
+ * http/https/data pass through unchanged. `file://` is **confined to [skillDir]** — it used
+ * to pass through unconditionally, which meant a skill (or anything that had talked the model
+ * into running its JS) could hand back `file:///data/data/<pkg>/shared_prefs/…` and the app
+ * would open it in the WebView, where `browser_get_text` reads it straight back out.
+ * Relative paths are resolved against the script file's parent directory, rewritten to
+ * `file://`, and held to the same fence. Returns null when the target escapes [skillDir].
  */
 internal fun resolveSkillWebviewUrl(
     url: String,
@@ -167,9 +171,16 @@ internal fun resolveSkillWebviewUrl(
     if (raw.isEmpty()) return null
     if (raw.startsWith("http://", ignoreCase = true)
         || raw.startsWith("https://", ignoreCase = true)
-        || raw.startsWith("file://", ignoreCase = true)
         || raw.startsWith("data:", ignoreCase = true)
     ) return raw
+    if (raw.startsWith("file:", ignoreCase = true)) {
+        return raw.takeIf {
+            me.rerere.rikkahub.browser.isWithinAnyRoot(
+                me.rerere.rikkahub.browser.fileUrlPath(raw),
+                listOf(skillDir),
+            )
+        }
+    }
 
     val pathOnly = raw.substringBefore('?').substringBefore('#')
     val query = raw.substring(pathOnly.length) // includes leading ? or # if present

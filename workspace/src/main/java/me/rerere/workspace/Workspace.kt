@@ -78,4 +78,12 @@ data class WorkspaceCommandResult(
     val stderr: String,
     val timedOut: Boolean = false,
     val truncated: Boolean = false,
+    /**
+     * 命令**没跑起来**（Rootfs 未安装、proot/loader 缺失……），而不是跑完返回了非 0。
+     *
+     * 两者的区别对上层是决定性的：hook 与机器验收把「exit != 0」当成工作不合格，
+     * 把「基础设施故障」当成「未得到结论」放行。以前这类失败只体现在 `exitCode = 127`
+     * 和一句 stderr 里，上层无从分辨，于是没装 Rootfs 的工作区上每条验收都判失败。
+     */
+    val infraFailure: Boolean = false,
 )

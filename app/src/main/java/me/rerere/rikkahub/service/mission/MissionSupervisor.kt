@@ -50,6 +50,9 @@ private const val USER_STOP_TITLE: String = "user_stop"
 /** 完成前检查失败（用于计数返工次数）。 */
 private const val CHECK_FAILED_TITLE: String = "check_failed"
 
+/** 检查因为环境原因没跑（不是工作不合格）。 */
+private const val CHECK_SKIPPED_TITLE: String = "check_skipped"
+
 /** 完成前检查通过的 journal 标题（用于把「连续失败」截断）。 */
 private const val CHECK_PASSED_TITLE: String = "check_passed"
 
@@ -420,10 +423,24 @@ class MissionSupervisor(
         // 批 F — 完成前检查：模型说 done 只是「申请完成」，检查命令说了才算。
         if (!beforeDoneGate(mission, runId, events)) return
         val summary = doneNote(events) ?: "目标已达成"
+        // 两道门都过了才算「一次干净的通过」：countCheckFailures 数的就是它之后的 check_failed，
+        // 所以这个标记必须只在真正完工时写一次（写早了会把熔断计数清零）。
+        runCatching {
+            runEventRepository.emit(
+                type = RunEventType.NOTE,
+                title = CHECK_PASSED_TITLE,
+                detail = "完工前检查通过",
+                missionId = mission.id,
+                conversationId = mission.conversationId,
+                runId = runId,
+            )
+        }
 
         // 批 B.5 — the model declared done: record its self-assessment against the goal
         // list. Reported indices are honoured; omitted / empty means "every goal met".
-        recordGoalSelfAssessment(mission, events)
+        // 配了机器验收的任务以机器结论为准：acceptanceGate 刚把逐条结果写进去，再用模型
+        // 自报的 goals（缺省=全部打勾）覆盖一遍等于把机器验收作废。
+        if (mission.limits.acceptanceChecks.isEmpty()) recordGoalSelfAssessment(mission, events)
 
         // 批 B — a trigger-driven mission recurs. A done signal ends THIS occurrence, not the
         // mission: park it back to IDLE (resume budget reset) and keep it ACTIVE so the next
@@ -468,6 +485,37 @@ class MissionSupervisor(
         missionRepository.updateExecutionState(mission.id, MissionExecutionState.IDLE)
         markIdle(mission.id)
         notify("任务完成：${mission.title}", summary)
+    }
+
+    /**
+     * 返工前的时间/token 闸。
+     *
+     * 返工走的是 `launcher.launch` 直连，绕开了 [MissionContinuePolicy] 里那两道预算检查——
+     * 一个验收永远过不了的任务可以靠「返工」无限烧下去。超过截止时间或烧完 token 预算时
+     * 直接把任务交给用户，返回 false 表示这一轮返工不该再发。
+     */
+    private suspend fun reworkAllowed(mission: MissionEntity): Boolean {
+        if (MissionTimeBudget.plan(mission.limits, now()).expired) {
+            parkExpired(mission)
+            return false
+        }
+        val budget = mission.limits.tokenBudget
+        if (budget > 0) {
+            val used = mission.conversationId
+                ?.let { cid -> runCatching { tokenProbe(cid) }.getOrDefault(0L) }
+                ?: 0L
+            if (used >= budget) {
+                val reason = "token 预算已用完（$used/$budget），还差的部分已交给你确认"
+                runCatching {
+                    missionRepository.transition(mission.id, MissionStatus.REVIEW, note = reason)
+                    missionRepository.updateExecutionState(mission.id, MissionExecutionState.IDLE)
+                }
+                markIdle(mission.id)
+                notify("任务待确认：${mission.title}", reason)
+                return false
+            }
+        }
+        return true
     }
 
     /** 批 H — 任务收尾：熄灭前台服务里属于它的那一条（不影响别的任务）。 */
@@ -638,16 +686,10 @@ class MissionSupervisor(
 
         val failed = outcomes.filter { it.blocking }
         if (failed.isEmpty()) {
-            runCatching {
-                runEventRepository.emit(
-                    type = RunEventType.NOTE,
-                    title = CHECK_PASSED_TITLE,
-                    detail = "验收通过：${outcomes.count { it.passed == true }}/${outcomes.size} 项",
-                    missionId = mission.id,
-                    conversationId = mission.conversationId,
-                    runId = runId,
-                )
-            }
+            // 这里**不写** check_passed：后面还有 beforeDoneGate。提前写一次「通过」，就会让
+            // countCheckFailures 在下一道门失败时把之前的失败全数清掉——每次都数到 1，
+            // `failures > maxReworks` 永远不成立，返工熔断形同虚设。
+            // 通过标记只在 complete() 两道门都过之后写一次。
             return true
         }
 
@@ -674,9 +716,13 @@ class MissionSupervisor(
         }
 
         val prompt = composeAcceptanceRework(failed, failures, maxReworks)
+        if (!reworkAllowed(mission)) return false
+        // 返工也是实实在在的一轮：不记进 resumeCount，maxResumeRounds 与交接提示词里的轮次
+        // 会把返工当成免费重试，模型看到的世界和实际花的预算就对不上了。
+        val reworkRound = missionRepository.bumpResumeCount(mission.id)
         val launch = launcher.launch(
             missionId = mission.id,
-            source = LaunchSource.Continue(mission.resumeCount + 1),
+            source = LaunchSource.Continue(reworkRound),
             continuePrompt = prompt,
         )
         if (!launch.ok) {
@@ -727,22 +773,12 @@ class MissionSupervisor(
         ) ?: return true
 
         if (outcome.skippedReason != null) {
-            journalHook(mission, outcome, runId, CHECK_FAILED_TITLE)
+            // 环境原因没跑 ≠ 工作不合格：用单独的标题，别让它看起来像一次失败。
+            journalHook(mission, outcome, runId, CHECK_SKIPPED_TITLE)
             return true
         }
-        if (!outcome.failed) {
-            runCatching {
-                runEventRepository.emit(
-                    type = RunEventType.NOTE,
-                    title = CHECK_PASSED_TITLE,
-                    detail = outcome.describe(),
-                    missionId = mission.id,
-                    conversationId = mission.conversationId,
-                    runId = runId,
-                )
-            }
-            return true
-        }
+        // 同上：通过标记统一由 complete() 在两道门都过了之后写。
+        if (!outcome.failed) return true
 
         journalHook(mission, outcome, runId, CHECK_FAILED_TITLE)
         if (!outcome.blocking) return true
@@ -764,9 +800,11 @@ class MissionSupervisor(
             round = failures,
             maxCheckFailures = maxReworks,
         )
+        if (!reworkAllowed(mission)) return false
+        val reworkRound = missionRepository.bumpResumeCount(mission.id)
         val launch = launcher.launch(
             missionId = mission.id,
-            source = LaunchSource.Continue(mission.resumeCount + 1),
+            source = LaunchSource.Continue(reworkRound),
             continuePrompt = prompt,
         )
         if (!launch.ok) {

@@ -21,6 +21,7 @@ class ProotShellRunner(
                 exitCode = 127,
                 stdout = "",
                 stderr = "Rootfs is not installed",
+                infraFailure = true,
             )
         }
 
@@ -31,6 +32,7 @@ class ProotShellRunner(
                 exitCode = 127,
                 stdout = "",
                 stderr = "proot executable not found: ${proot.absolutePath}",
+                infraFailure = true,
             )
         }
         if (!loader.isFile) {
@@ -38,6 +40,7 @@ class ProotShellRunner(
                 exitCode = 127,
                 stdout = "",
                 stderr = "proot loader not found: ${loader.absolutePath}",
+                infraFailure = true,
             )
         }
 

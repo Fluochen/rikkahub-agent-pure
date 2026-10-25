@@ -192,6 +192,19 @@ class MissionEngine(
         return lastRunId
     }
 
+    /**
+     * 任务执行会话绑定的**任务工作区**，非任务会话或任务没绑工作区时 null。
+     *
+     * 任务有自己的一级工作区（创建时自动建/用户指定），快照、hook、机器验收、产物预览全都
+     * 按 `mission.workspaceId` 找。工具装配和提示词注入以前只读助理的工作区，于是任务轮次
+     * 要么拿不到 workspace_* 工具（助理没绑工作区），要么在助理的工作区里干活、系统却在任务
+     * 工作区里验收。
+     */
+    suspend fun workspaceIdFor(conversationId: String): String? = runCatching {
+        val missionId = missionIdFor(conversationId) ?: return@runCatching null
+        repository.getById(missionId)?.workspaceIdOrNull
+    }.getOrNull()
+
     suspend fun missionIdFor(conversationId: String): String? = runCatching {
         bindings[conversationId] ?: repository.findActiveByConversation(conversationId)?.let { entity ->
             bindings[conversationId] = entity.id
