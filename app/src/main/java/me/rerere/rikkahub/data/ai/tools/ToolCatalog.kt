@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -18,6 +19,16 @@ import me.rerere.ai.ui.UIMessagePart
 // catalog summaries of the same length this file enforces when it serialises search hits.
 internal const val TOOL_CATALOG_MAX_SEARCH_RESULTS = 8
 internal const val TOOL_CATALOG_MAX_OPEN_PER_CALL = 4
+
+/**
+ * Page sizes for `tool_browse`, the deterministic index.
+ *
+ * The page is large because the alternative is a model paging through 200 names by round trip;
+ * it is capped because an envelope that dumps the whole catalogue is a context bomb the model
+ * cannot un-buy.
+ */
+internal const val TOOL_BROWSE_DEFAULT_PAGE = 40
+internal const val TOOL_BROWSE_MAX_PAGE = 60
 
 /**
  * How many opened schemas one chat keeps attached at the same time.
@@ -360,8 +371,9 @@ fun buildToolCatalogTools(
             activate it with tool_open, then call it right away: it becomes callable on your
             very next step, still inside this same turn.
             If it reports that semantic search is unavailable, the embedding model is missing or
-            still warming up. Say so to the user and stop rather than retrying with other words:
-            searching again cannot fix it.
+            still warming up. tool_browse lists the same catalogue by name with paging, so use it
+            and open what you need instead of giving up; do not retry the same search with other
+            words, which cannot fix a missing model.
             """.trimIndent(),
         parameters = {
             InputSchema.Obj(
@@ -396,6 +408,69 @@ fun buildToolCatalogTools(
                 ).toJson()
             }
             listOf(UIMessagePart.Text(body))
+        },
+    ),
+    Tool(
+        name = "tool_browse",
+        description = """
+            List the tool catalogue by name, in catalogue order, with each entry's source and a
+            one-line summary. This is the index, not a search: it needs no query and no
+            embedding model. Use it when tool_search reports that semantic search is
+            unavailable — then this is the only way to find names — or to see what exists at
+            all before deciding. Paged: the answer says how many entries remain, and `offset`
+            continues from there. Any returned name can be passed straight to tool_open.
+        """.trimIndent(),
+        parameters = {
+            InputSchema.Obj(
+                properties = buildJsonObject {
+                    put("offset", buildJsonObject {
+                        put("type", "integer")
+                        put("description", "Index of the first entry to return. Default 0.")
+                    })
+                    put("limit", buildJsonObject {
+                        put("type", "integer")
+                        put(
+                            "description",
+                            "Page size, 1..$TOOL_BROWSE_MAX_PAGE. Default $TOOL_BROWSE_DEFAULT_PAGE.",
+                        )
+                    })
+                },
+            )
+        },
+        execute = {
+            val requestedOffset =
+                it.jsonObject["offset"]?.jsonPrimitive?.intOrNull ?: 0
+            val limit =
+                (it.jsonObject["limit"]?.jsonPrimitive?.intOrNull ?: TOOL_BROWSE_DEFAULT_PAGE)
+                    .coerceIn(1, TOOL_BROWSE_MAX_PAGE)
+            val all = catalog.entries
+            val start = requestedOffset.coerceIn(0, all.size)
+            val page = all.drop(start).take(limit)
+            val body = buildJsonObject {
+                put("total", all.size)
+                put("offset", start)
+                put("returned", page.size)
+                put("remaining", (all.size - start - page.size).coerceAtLeast(0))
+                put(
+                    "entries",
+                    JsonArray(
+                        page.map { entry ->
+                            buildJsonObject {
+                                put("name", entry.name)
+                                put(
+                                    "summary",
+                                    entry.summary.take(TOOL_CATALOG_MAX_SUMMARY_CHARS),
+                                )
+                                put("source", entry.source.name)
+                            }
+                        },
+                    ),
+                )
+                if (all.isEmpty()) {
+                    put("note", "The catalogue is empty: no tools are registered for this turn.")
+                }
+            }
+            listOf(UIMessagePart.Text(Json.encodeToString(JsonObject.serializer(), body)))
         },
     ),
     Tool(

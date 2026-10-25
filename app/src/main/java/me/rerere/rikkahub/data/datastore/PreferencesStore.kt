@@ -515,7 +515,7 @@ class SettingsStore(
                 enabledSystemInjections = preferences[ENABLED_SYSTEM_INJECTIONS]?.let { raw ->
                     runCatching { JsonInstant.decodeFromString<Set<String>>(raw) }
                         .getOrNull()
-                        ?.let { ids -> SystemInjections.normalize(ids) }
+                        ?.let { ids -> SystemInjections.withLatePacks(SystemInjections.normalize(ids)) }
                 } ?: SystemInjections.DEFAULT_IDS,
                 allowModelMissionCreation = preferences[ALLOW_MODEL_MISSION_CREATION] != false,
                 agentDefaultsVersion = preferences[AGENT_DEFAULTS_VERSION] ?: 0,

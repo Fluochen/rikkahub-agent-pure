@@ -21,8 +21,17 @@ class DefaultAssistantPromptTest {
     }
 
     @Test
-    fun `a user-written prompt is left untouched`() {
-        val custom = "You are my editor. Always answer in 简体中文 and never use em dashes."
+    fun `the skeleton shipped before this one also upgrades`() {
+        // Installs that took #393's skeleton never edited it; it is still a default, so it must
+        // be replaced rather than kept forever as a half-manual.
+        assertEquals(
+            DefaultAssistantPrompt.SKELETON,
+            DefaultAssistantPrompt.upgrade(DefaultAssistantPrompt.PREVIOUS_SKELETON),
+        )
+    }
+
+    @Test
+    fun `a user-written prompt is left untouched`() {        val custom = "You are my editor. Always answer in 简体中文 and never use em dashes."
         assertEquals(custom, DefaultAssistantPrompt.upgrade(custom))
     }
 

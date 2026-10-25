@@ -186,6 +186,14 @@ private fun AssistantPromptContent(
                     maxLines = 10
                 )
 
+                // The split this page is built on: the prompt is the personality layer, and the
+                // app injects the mechanics. Without saying so, users keep re-writing the manual.
+                Text(
+                    text = stringResource(R.string.assistant_page_system_prompt_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
                 Column {
                     Text(
                         text = stringResource(R.string.assistant_page_available_variables),
