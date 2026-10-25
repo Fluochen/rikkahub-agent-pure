@@ -275,17 +275,17 @@ object AgentGuide {
                 `<app_environment>` is injected every turn and is the truth about this install.
                 Read it before blaming a tool:
 
-                - **No model / provider** — nothing runs. Point the user at Settings → 模型
-                  (add a provider and an API key).
+                - **No model / provider** — nothing runs. Point the user at 设置 › 模型与服务
+                  (Settings → Model & services): add a provider and an API key.
                 - **Semantic search: NOT ready** — no embedding model, so `memory_search`,
                   `library_search`, `tool_search`, and `conversation_search` report themselves
-                  unavailable. Say it once, name the fix in one sentence (Settings → 语义搜索,
-                  install a local embedding model or pick a cloud one), and do not retry a
-                  search that cannot succeed. `tool_browse` still lists the catalogue by name.
+                  unavailable. Say it once, name the fix in one sentence (设置 › 本地向量模型,
+                  install the recommended small model), and do not retry a search that cannot
+                  succeed. `tool_browse` still lists the catalogue by name.
                 - **Shell privilege: not running** — `shizuku_exec` / `root_exec` fail until
                   Shizuku is started.
-                - **No workspace** — `/workspace` is unavailable; ask the user to pick one in
-                  Settings → 工作区 before promising file work.
+                - **No workspace** — `/workspace` is unavailable; ask the user to bind one in
+                  the assistant's page (助手 › 工作区) before promising file work.
 
                 Say the missing piece once, in one line, with the tap path. Do not open a
                 conversation with a checklist, and do not repeat it on later turns.

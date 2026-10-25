@@ -210,6 +210,22 @@ object SystemInjections {
     /** Every pack on — the default: a new install needs no prompt work to behave like an agent. */
     val DEFAULT_IDS: Set<String> = ALL.map { it.id }.toSet()
 
+    /**
+     * Packs that shipped after the first set. A stored `enabledSystemInjections` was persisted
+     * before these existed, so reading it back verbatim would leave every existing install
+     * without the client map and the perception limits — exactly the two packs the out-of-box
+     * experience depends on.
+     *
+     * [withLatePacks] folds them in. That is safe because the settings UI exposes a single
+     * all-or-nothing switch: a non-empty stored set means "the app rules are on", not "I chose
+     * these seven and not those two". An explicitly emptied set stays empty.
+     */
+    val PACKS_ADDED_LATER: Set<String> = setOf(CLIENT, LIMITS)
+
+    /** A stored enabled-set, updated with packs that shipped after it was written. */
+    fun withLatePacks(stored: Set<String>): Set<String> =
+        if (stored.isEmpty()) stored else normalize(stored + PACKS_ADDED_LATER)
+
     /** Drops unknown ids, keeping [ALL]'s order for rendering. */
     fun normalize(ids: Set<String>): Set<String> = ids.filter { id -> ALL.any { it.id == id } }.toSet()
 

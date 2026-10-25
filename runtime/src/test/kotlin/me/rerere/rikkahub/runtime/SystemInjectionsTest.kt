@@ -45,6 +45,25 @@ class SystemInjectionsTest {
     }
 
     @Test
+    fun `a stored set written before the new packs existed gets them on read`() {
+        val oldDefault = setOf(
+            SystemInjections.CORE,
+            SystemInjections.SAFETY,
+            SystemInjections.TOOLS,
+            SystemInjections.FILES,
+            SystemInjections.VERIFY,
+            SystemInjections.MEMORY,
+            SystemInjections.MISSION,
+        )
+        val migrated = SystemInjections.withLatePacks(oldDefault)
+        assertTrue(SystemInjections.CLIENT in migrated)
+        assertTrue(SystemInjections.LIMITS in migrated)
+        assertEquals(9, migrated.size)
+        // Turning the app rules off stays off: an empty set is a decision, not a stale default.
+        assertTrue(SystemInjections.withLatePacks(emptySet()).isEmpty())
+    }
+
+    @Test
     fun `stable bytes across calls with the same input`() {
         val enabled = setOf(SystemInjections.TOOLS, SystemInjections.FILES)
         assertEquals(
