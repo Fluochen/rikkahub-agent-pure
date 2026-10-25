@@ -944,6 +944,11 @@ private fun LimitsDialog(
     var checksText by remember(limits) {
         mutableStateOf(AcceptanceCheckSpec.toEditorLines(limits.acceptanceChecks))
     }
+    // 批 I — 工具级 hook（前/后）。与验收条件同样是「一行一条」，因为它们是同一类东西：
+    // 声明式的一小段断言/策略，用表单反而更慢。
+    var toolHooksText by remember(limits) {
+        mutableStateOf(me.rerere.rikkahub.data.mission.MissionHookSpec.toToolHookLines(limits.hooks))
+    }
 
     val resumeValue = resume.toIntOrNull()?.takeIf { it >= 0 }
     val stallValue = stall.toIntOrNull()?.takeIf { it >= 0 }
@@ -1014,6 +1019,14 @@ private fun LimitsDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
+                    value = toolHooksText,
+                    onValueChange = { toolHooksText = it },
+                    label = { Text(text = stringResource(R.string.mission_limits_tool_hooks)) },
+                    minLines = 2,
+                    maxLines = 6,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
                     value = checksText,
                     onValueChange = { checksText = it },
                     label = { Text(text = stringResource(R.string.mission_limits_acceptance)) },
@@ -1059,7 +1072,16 @@ private fun LimitsDialog(
                                 // 批 F — 检查命令不在这个对话框里改，但保存时必须原样带过去，
                                 // 否则「改个轮数」会把用户配的 hook 一并抹掉。
                                 maxCheckFailures = limits.maxCheckFailures,
-                                hooks = limits.hooks,
+                                // 批 I — 时间类 hook 不在这个对话框里编辑，原样带过去；
+                                // 工具级 hook 由文本框重建。
+                                hooks = limits.hooks.filterNot {
+                                    it.whenKind == me.rerere.rikkahub.data.mission.MissionHookWhen.TOOL_BEFORE ||
+                                        it.whenKind == me.rerere.rikkahub.data.mission.MissionHookWhen.TOOL_AFTER
+                                } + me.rerere.rikkahub.data.mission.MissionHookSpec.parseToolHookLines(
+                                    toolHooksText,
+                                    failAction = limits.hooks.firstOrNull()?.failAction
+                                        ?: me.rerere.rikkahub.data.mission.MissionHook.ACTION_BLOCK,
+                                ),
                                 roundTimeoutMinutes = roundTimeoutValue!!,
                                 wrapUpMinutes = wrapUpValue!!,
                                 deadlineAt = deadlineHoursValue

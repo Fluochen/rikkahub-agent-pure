@@ -364,6 +364,14 @@ val dataSourceModule = module {
             shell = get<me.rerere.rikkahub.service.mission.MissionHookShell>(),
         )
     }
+    // 批 I — 工具级 hook（PreToolUse / PostToolUse）：只在任务会话上生效。
+    single {
+        me.rerere.rikkahub.service.mission.MissionToolHooks(
+            missionRepository = get(),
+            runEventRepository = get(),
+            executor = get(),
+        )
+    }
     single {
         val settingsStore = get<SettingsStore>()
         val workspaceRepository = get<me.rerere.rikkahub.data.repository.WorkspaceRepository>()
