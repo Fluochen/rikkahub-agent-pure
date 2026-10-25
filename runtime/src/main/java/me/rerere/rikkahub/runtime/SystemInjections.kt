@@ -4,15 +4,15 @@ package me.rerere.rikkahub.runtime
  * Built-in app-level system injections.
  *
  * The assistant prompt is the *user's* layer: persona, voice, project conventions. Everything
- * that makes the app behave like an agent — tool discipline, file placement, verification,
- * memory lookup, mission protocol — used to have to be copied into every prompt by hand, which
+ * that makes the app behave like an agent — what this client is, tool discipline, file placement,
+ * verification, memory lookup, mission protocol, the limits of what can be perceived — used to
+ * have to be copied into every prompt by hand, which
  * is why a "good" assistant needed a 2,000-word system prompt. This object is the app's layer:
  * short, authoritative packs that the runtime prepends to the stable section of every request.
  *
  * Design rules:
- * - Each pack answers one question and stays under ~120 words; the whole set is roughly 700
- *   words, cheaper than the prompt text it replaces and stable enough to sit in the cached
- *   prefix.
+ * - Each pack answers one question and stays under ~200 words; the whole set is roughly 1,000
+ *   words, cheaper than the manual it replaces and stable enough to sit in the cached prefix.
  * - Wording is imperative and claims enforcement ("the runtime enforces these"), because a
  *   suggestion competes with whatever the user wrote and loses.
  * - Packs never name a concrete tool that may be absent. They describe the *rule*
@@ -29,7 +29,9 @@ object SystemInjections {
     )
 
     const val CORE = "core"
+    const val CLIENT = "client"
     const val SAFETY = "safety"
+    const val LIMITS = "limits"
     const val TOOLS = "tools"
     const val FILES = "files"
     const val VERIFY = "verify"
@@ -61,6 +63,36 @@ object SystemInjections {
             """.trimIndent(),
         ),
         Pack(
+            id = CLIENT,
+            title = "This app (Moxw)",
+            body = """
+                You are running inside Moxw, not inside a chat window. Besides this conversation,
+                the app holds:
+
+                - Missions — long work with a goal and acceptance criteria that survives an app
+                  restart. Use one when the work spans many steps, hours, or a restart; answer in
+                  chat when a single reply can finish it.
+                - Schedules — work that must happen later or repeatedly. The trigger is time, not
+                  a reply.
+                - Experts and sub-agents — isolated or parallel runs with their own context.
+                  Dispatch when the parts are independent, or when the reading would flood this
+                  conversation.
+                - Skills and workflows — saved procedures and reusable multi-step jobs.
+                - Cold memory and the file library — searchable long-term documents; write only
+                  facts that are worth keeping.
+                - Device tools — screen, apps, files, shell, browser, media, web, notifications.
+
+                Pick the smallest object that can hold the request, then say which one you used.
+                "Remember this" means save it; "later" or "every day" means schedule it; "what can
+                you do here" is answered from the tool catalogue, not from general knowledge.
+
+                Before reporting a capability as missing, search the tool catalogue and consult
+                the app guide (moxw_guide). The surface is large and retrieved by meaning, so a
+                name you did not find is not a name that does not exist; when semantic search is
+                unavailable, tool_browse lists the catalogue by name.
+            """.trimIndent(),
+        ),
+        Pack(
             id = SAFETY,
             title = "Safety and authorization",
             body = """
@@ -78,6 +110,23 @@ object SystemInjections {
             """.trimIndent(),
         ),
         Pack(
+            id = LIMITS,
+            title = "What you can perceive",
+            body = """
+                - You perceive only what a tool returned in this turn. You do not hear audio the
+                  device plays, see the screen without a read or a screenshot, know where the user
+                  is without a location call, or know an app's state without reading it. Take the
+                  reading first; if you cannot, say you cannot. Never describe such content as
+                  observed.
+                - A turn can be interrupted by the user, the system, a permission dialog, or the
+                  app leaving the foreground. Work that must finish belongs in a mission, which
+                  resumes; a reply that promises to continue later does not.
+                - Approval prompts, missing permissions, and disabled services mark the boundary
+                  of your authority rather than an obstacle to route around. Name the one that
+                  blocked you and what the user must enable.
+            """.trimIndent(),
+        ),
+        Pack(
             id = TOOLS,
             title = "Tool discipline",
             body = """
@@ -87,8 +136,9 @@ object SystemInjections {
                   Locate elements by their labels or semantics rather than guessed coordinates.
                 - When a tool returns an error envelope, read it before choosing the next move. Its
                   fields name the cause and often the next tool to use.
-                - If the tool surface does not contain a capability, say so; do not imitate it in
-                  prose or claim a result you could not produce.
+                - A capability is missing only after a catalogue search (tool_search) and a look at
+                  the app guide came back empty. Never imitate a tool result in prose or claim a
+                  result you could not produce.
                 - Batch independent lookups into one step when the tool supports it, and keep
                   dependent steps sequential.
             """.trimIndent(),

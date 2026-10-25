@@ -132,6 +132,7 @@
   <string name="assistant_page_stream_output_desc">是否启用消息的流式输出</string>
   <string name="assistant_page_strict">严谨</string>
   <string name="assistant_page_system_prompt">系统提示词</string>
+  <string name="assistant_page_system_prompt_hint">这里只写人格、专长与偏好。工具、文件、任务、记忆以及“能看见什么”由 App 自动注入，完整手册一次 moxw_guide 就能查到。</string>
   <string name="assistant_page_tab_basic">基础设定</string>
   <string name="assistant_page_tab_extensions">扩展管理</string>
   <string name="assistant_page_tab_local_tools">本地工具</string>
@@ -2828,7 +2829,7 @@ HARDLINE 保护仍然生效：rm -rf /、mkfs、shutdown / reboot、向块设备
   <string name="getting_started_step_model_title">添加对话模型</string>
   <string name="getting_started_step_model_desc">进入「模型提供商」，选一个并填入 API Key（OpenRouter，或任何 OpenAI 兼容接口）。没有对话模型，消息发不出去。</string>
   <string name="getting_started_step_embedding_title">安装向量模型</string>
-  <string name="getting_started_step_embedding_desc">Moxw 里的检索——记忆、文件、历史对话、工具目录——全部依赖端侧向量模型。没装它，助手既没有工具、也记不住东西；先装一个小号的即可。</string>
+  <string name="getting_started_step_embedding_desc">Moxw 里的检索——记忆、文件、历史对话、工具目录——全部依赖端侧向量模型。没装它，按语义的检索一律不可用，助手只能靠 tool_browse 按名字翻目录；先装一个小号的即可。</string>
   <string name="getting_started_step_tools_title">开启额外能力</string>
   <string name="getting_started_step_tools_desc">工具目录始终开启、按语义自动挑选，不需要手动打开。这里开启的是需要你亲自提供前提的系统级能力：屏幕操控、Shizuku、Termux 等。</string>
   <string name="getting_started_step_permissions_title">授予权限</string>
@@ -2959,7 +2960,7 @@ HARDLINE 保护仍然生效：rm -rf /、mkfs、shutdown / reboot、向块设备
   <string name="mission_workflows_save">保存</string>
   <string name="mission_workflows_edit_hint">修改会在下一轮生效；任务里只保存流程文件的路径。</string>
   <string name="setting_agent_injections_title">内置系统规则</string>
-  <string name="setting_agent_injections_desc">每次请求都附带应用级规则：工具使用、文件交付、结果验证、记忆与任务。默认开启；关闭后只保留助手自己的提示词。</string>
+  <string name="setting_agent_injections_desc">每次请求都附带应用级规则：这个客户端有什么、工具使用、文件交付、结果验证、记忆、任务，以及模型实际能感知到什么。默认开启；关闭后只保留助手自己的提示词。</string>
   <string name="setting_agent_missions_title">允许模型发起任务</string>
   <string name="setting_agent_missions_desc">允许模型在普通对话里判断工作需要跨轮推进时，直接创建后台任务。是否弹审批仍取决于工具审批模式。</string>
   <string name="mission_workflow_title">工作流程文档</string>

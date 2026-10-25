@@ -97,6 +97,8 @@ import me.rerere.rikkahub.data.ai.tools.ToolCatalogSource
 import me.rerere.rikkahub.data.ai.tools.ToolRankFusion
 import me.rerere.rikkahub.data.ai.tools.LocalToolGates
 import me.rerere.rikkahub.data.ai.tools.LocalToolPalette
+import me.rerere.rikkahub.data.ai.tools.MOXW_GUIDE_TOOL_NAME
+import me.rerere.rikkahub.data.ai.tools.moxwGuideTool
 import me.rerere.rikkahub.data.ai.tools.buildMissionReportTool
 import me.rerere.rikkahub.data.ai.tools.buildToolCatalogTools
 import me.rerere.rikkahub.data.ai.tools.ToolSearchAnswer
@@ -2287,6 +2289,11 @@ class ChatService(
                     // The recovery path for a truncated tool result, mirrored from the
                     // regenerate path above so both surfaces are identical.
                     addAll(createToolOutputReadTools())
+                    // The app's operating manual, attached rather than catalogued: the CLIENT
+                    // injection tells the model to consult it before calling a capability
+                    // missing, and that instruction is worthless if reaching the guide first
+                    // requires a search that may itself be unavailable (no embedding model).
+                    add(moxwGuideTool())
         // P4 — the file library's search, on both build paths so a regenerate sees the surface the
         // first pass had. Off unless enabled AND configured.
         addAll(createLibraryToolsIfConfigured(surfaceAssistant))
@@ -2484,7 +2491,11 @@ class ChatService(
                     }.orEmpty()
                     run {
                         val catalog = ToolCatalog(
-                            entries = localSurface.map { tool ->
+                            // `moxw_guide` is attached as a schema below instead of being
+                            // catalogued: it is the entry point to the manual, so it must not
+                            // need a search to reach. Cataloguing it as well would offer the
+                            // model a second copy of the same name.
+                            entries = localSurface.filterNot { it.name == MOXW_GUIDE_TOOL_NAME }.map { tool ->
                                 ToolCatalogEntry(
                                     name = tool.name,
                                     summary = LocalToolPalette.summarize(tool),

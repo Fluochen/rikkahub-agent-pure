@@ -52,4 +52,39 @@ class SystemInjectionsTest {
             SystemInjections.render(enabled),
         )
     }
+
+    @Test
+    fun `the client pack tells the model what this app holds and how to find a capability`() {
+        val client = SystemInjections.ALL.single { it.id == SystemInjections.CLIENT }.body
+        // The object model: without these words a fresh install is just a chat window.
+        listOf("Missions", "Schedules", "sub-agents", "memory", "file library", "Device tools")
+            .forEach { assertTrue("missing object: $it", client.contains(it)) }
+        // The discovery rule that keeps "I can't" honest.
+        assertTrue(client.contains("tool_search"))
+        assertTrue(client.contains("moxw_guide"))
+        assertTrue(client.contains("did not find is not a name that does not exist"))
+    }
+
+    @Test
+    fun `the limits pack forbids claiming unobserved perception`() {
+        val limits = SystemInjections.ALL.single { it.id == SystemInjections.LIMITS }.body
+        assertTrue(limits.contains("do not hear audio"))
+        assertTrue(limits.contains("never", ignoreCase = true))
+    }
+
+    @Test
+    fun `the tool pack no longer treats an unsearched surface as proof of absence`() {
+        val tools = SystemInjections.ALL.single { it.id == SystemInjections.TOOLS }.body
+        assertFalse(tools.contains("If the tool surface does not contain a capability, say so"))
+        assertTrue(tools.contains("catalogue search"))
+    }
+
+    @Test
+    fun `the whole set stays inside the prefix budget it was written for`() {
+        // Measured in words because that is what the model pays for. 1,600 leaves room for the
+        // tool guidance block and the assistant prompt before the manual would have been
+        // cheaper to inject as one block.
+        val words = SystemInjections.render().split(Regex("\\s+")).count { it.isNotBlank() }
+        assertTrue("injections grew to $words words", words < 1_600)
+    }
 }

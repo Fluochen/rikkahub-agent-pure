@@ -313,9 +313,45 @@ class ToolCatalogTest {
     // ------------------------------------------------------------ tool wiring
 
     @Test
-    fun `factory returns the search, open and close tools`() {
+    fun `factory returns the search, browse, open and close tools`() {
         val tools = catalogTools(catalogOf("t_1"))
-        assertEquals(listOf("tool_search", "tool_open", "tool_close"), tools.map { it.name })
+        assertEquals(
+            listOf("tool_search", "tool_browse", "tool_open", "tool_close"),
+            tools.map { it.name },
+        )
+    }
+
+    @Test
+    fun `tool_browse pages the catalogue and says what remains`() = runBlocking {
+        val tools = catalogTools(catalogOf("t_1", "t_2", "t_3", "t_4", "t_5"))
+        val browse = tools.first { it.name == "tool_browse" }
+
+        val first = (browse.execute(buildJsonObject { put("limit", 2) }).single() as UIMessagePart.Text).text
+        val parsed = kotlinx.serialization.json.Json.parseToJsonElement(first).jsonObject
+        assertEquals(5, parsed["total"]?.jsonPrimitive?.content?.toInt())
+        assertEquals(2, parsed["returned"]?.jsonPrimitive?.content?.toInt())
+        assertEquals(3, parsed["remaining"]?.jsonPrimitive?.content?.toInt())
+        val names = (parsed["entries"] as JsonArray).mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.content }
+        assertEquals(listOf("t_1", "t_2"), names)
+
+        val last = (browse.execute(buildJsonObject { put("offset", 4); put("limit", 2) })
+            .single() as UIMessagePart.Text).text
+        val tail = kotlinx.serialization.json.Json.parseToJsonElement(last).jsonObject
+        assertEquals(1, tail["returned"]?.jsonPrimitive?.content?.toInt())
+        assertEquals(0, tail["remaining"]?.jsonPrimitive?.content?.toInt())
+    }
+
+    @Test
+    fun `tool_browse works with no semantic channel at all`() = runBlocking {
+        // The whole point of the index: an install with no embedding model can still find a
+        // name to hand to tool_open.
+        val catalog = catalogOf("take_screenshot")
+        val tools = buildToolCatalogTools(catalog, ToolActivationState()) { _ ->
+            ToolSearchAnswer.Unavailable("no embedding model")
+        }
+        val browse = tools.first { it.name == "tool_browse" }
+        val text = (browse.execute(JsonObject(emptyMap())).single() as UIMessagePart.Text).text
+        assertTrue(text.contains("take_screenshot"))
     }
 
     @Test

@@ -271,6 +271,7 @@
   <string name="assistant_page_stream_output_desc">Whether to enable streaming output for messages</string>
   <string name="assistant_page_strict">Strict</string>
   <string name="assistant_page_system_prompt">System Prompt</string>
+  <string name="assistant_page_system_prompt_hint">Write personality, expertise and preferences here. How this app works — tools, files, missions, memory, and what the model can perceive — is injected automatically; the full manual is one moxw_guide call away.</string>
   <string name="assistant_page_tab_basic">Basic Settings</string>
   <string name="assistant_page_tab_extensions">Extensions</string>
   <string name="assistant_page_tab_local_tools">Local Tools</string>
@@ -3113,7 +3114,7 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <string name="getting_started_step_model_title">Add a chat model</string>
   <string name="getting_started_step_model_desc">Open a provider and paste an API key (OpenRouter, or any OpenAI-compatible endpoint). Without a chat model nothing can reply.</string>
   <string name="getting_started_step_embedding_title">Install the embedding model</string>
-  <string name="getting_started_step_embedding_desc">Every search in Moxw — memory, files, past chats and the tool catalogue — runs on the on-device embedding model. Without it the assistant has no tools and remembers nothing, so pick one small model to start.</string>
+  <string name="getting_started_step_embedding_desc">Every search in Moxw — memory, files, past chats and the tool catalogue — runs on the on-device embedding model. Without it, meaning-based retrieval returns nothing and the assistant can only page the catalogue by name, so pick one small model to start.</string>
   <string name="getting_started_step_tools_title">Switch on extra capabilities</string>
   <string name="getting_started_step_tools_desc">The tool catalogue is always on and chosen by meaning, so there is nothing to turn on for it. Here you enable the system-level ones that need something only you can provide: screen control, Shizuku, Termux and the like.</string>
   <string name="getting_started_step_permissions_title">Grant permissions</string>
@@ -3244,7 +3245,7 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <string name="mission_workflows_save">Save</string>
   <string name="mission_workflows_edit_hint">Edits apply to the next mission round. The mission row only stores the file path.</string>
   <string name="setting_agent_injections_title">Built-in system rules</string>
-  <string name="setting_agent_injections_desc">Send the app rules for tools, files, verification, memory and missions with every request. On by default; turning it off leaves only your assistant prompt.</string>
+  <string name="setting_agent_injections_desc">Send the app rules with every request: what this client holds, tool discipline, file delivery, verification, memory, missions, and what the model can actually perceive. On by default; turning it off leaves only your assistant prompt.</string>
   <string name="setting_agent_missions_title">Let the model start tasks</string>
   <string name="setting_agent_missions_desc">Allow the model to create a background mission from a normal conversation when the work is long or multi-step. Starting still follows your tool approval mode.</string>
   <string name="mission_workflow_title">Workflow document</string>

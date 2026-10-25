@@ -1016,6 +1016,10 @@ class LocalTools(
         // per-tool overrides (see [HIDDEN_TOOL_NAMES]) — it backs the app's own update
         // path, not an optional capability. The Reliability group keeps only bug reports.
         tools.add(me.rerere.rikkahub.reliability.checkAppUpdatesTool(gitHubReleaseChecker))
+        // The app's own operating manual, on demand — always registered for the same reason
+        // `check_app_updates` is: this is part of the client, not an optional capability. The
+        // `CLIENT` system injection names it, so it must never be behind a group toggle.
+        tools.add(moxwGuideTool())
         if (options.contains(LocalToolOption.Reliability)) {
             tools.add(me.rerere.rikkahub.reliability.generateBugReportTool(context, bugReportBuilder))
         }

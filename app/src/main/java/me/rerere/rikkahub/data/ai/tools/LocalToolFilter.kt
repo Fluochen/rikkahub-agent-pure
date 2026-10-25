@@ -39,6 +39,10 @@ object LocalToolFilter {
      */
     val UNGROUPED_TOOL_NAMES: Set<String> = setOf(
         "check_app_updates",
+        // The app's operating manual (`moxw_guide`): built-in, always registered, and named by
+        // the CLIENT injection pack. A group row or a stored opt-out must not be able to remove
+        // it, or the prompt would advertise a tool the turn does not have.
+        MOXW_GUIDE_TOOL_NAME,
         "web_fetch",
         "web_extract",
     )
