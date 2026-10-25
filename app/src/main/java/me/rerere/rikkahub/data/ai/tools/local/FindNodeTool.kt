@@ -207,7 +207,7 @@ fun findNodeTool(
             }
             val (matches, truncated) = findMatchesUnified(svc, root, by, value)
             if (matches.isEmpty()) {
-                AutomationRecorder.recordAction(
+                AutomationRecorder.recordAction(scope = invocationContext.callerConversationId, 
                     packageName = pkg,
                     screen = svc.lastWindowClassName,
                     action = "find",
@@ -340,7 +340,7 @@ fun clickNodeTool(
                     }
                 }
                 if (target == null) {
-                    AutomationRecorder.recordAction(
+                    AutomationRecorder.recordAction(scope = invocationContext.callerConversationId, 
                         packageName = pkg,
                         screen = svc.lastWindowClassName,
                         action = "click",
@@ -366,7 +366,7 @@ fun clickNodeTool(
                 val clickable = svc.resolveClickable(target)
                     ?: return@withActionEnvelope buildJsonObject { put("error", "no_clickable_ancestor") }
                 val ok = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                AutomationRecorder.recordAction(
+                AutomationRecorder.recordAction(scope = invocationContext.callerConversationId, 
                     packageName = pkg,
                     screen = svc.lastWindowClassName,
                     action = "click",
@@ -523,7 +523,7 @@ fun setTextTool(
                     }
                 }
                 if (target == null) {
-                    AutomationRecorder.recordAction(
+                    AutomationRecorder.recordAction(scope = invocationContext.callerConversationId, 
                         packageName = pkg,
                         screen = svc.lastWindowClassName,
                         action = "set_text",
@@ -566,7 +566,7 @@ fun setTextTool(
                 }
                 val ok = editable.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
                 // Deliberately no typed value: the text the user dictated must not be persisted.
-                AutomationRecorder.recordAction(
+                AutomationRecorder.recordAction(scope = invocationContext.callerConversationId, 
                     packageName = pkg,
                     screen = svc.lastWindowClassName,
                     action = "set_text",
