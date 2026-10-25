@@ -3445,4 +3445,25 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <string name="instances_filter_absent_desc">Default. Hides a group only when its backend app is not installed at all. Missing permission, missing rootfs or an untested host never hides anything.</string>
   <string name="instances_filter_not_ready">Whenever the backend is not ready</string>
   <string name="instances_filter_not_ready_desc">Experimental. Also hides groups whose backend needs setup right now. The catalogue can change between turns.</string>
+  <string name="instances_section_permissions">Permissions</string>
+  <string name="instances_action_open">Open</string>
+  <string name="instances_ssh_address">Address</string>
+  <string name="instances_ssh_auth">Authentication</string>
+  <string name="instances_ssh_auth_password">Password</string>
+  <string name="instances_ssh_auth_key">Private key</string>
+  <string name="instances_ssh_edit">Edit</string>
+  <string name="instances_ssh_test">Test connection</string>
+  <string name="instances_ssh_test_ok">Connection OK</string>
+  <string name="instances_ssh_test_failed">Connection failed: %1$s</string>
+  <string name="instances_ssh_delete_title">Delete this host?</string>
+  <string name="instances_ssh_delete_body">%1$s will be removed from the device. The tools stop seeing it immediately.</string>
+  <string name="instances_workspace_root">Root directory</string>
+  <string name="instances_workspace_install">Install Linux</string>
+  <string name="instances_workspace_reinstall">Reinstall Linux</string>
+  <string name="instances_workspace_error">Install failed: %1$s</string>
+  <string name="instances_perm_storage">Storage (all files)</string>
+  <string name="instances_perm_accessibility">Accessibility service</string>
+  <string name="instances_perm_notifications">Notification access</string>
+  <string name="instances_perm_granted">Granted</string>
+  <string name="instances_perm_missing">Not granted</string>
 </resources>
