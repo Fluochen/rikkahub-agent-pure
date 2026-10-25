@@ -1787,7 +1787,10 @@ class ChatService(
         // approval, no depth cap and no budget: an unapproved fork bomb that also bypassed the
         // sub-agent surface. A frozen surface means we are already inside a delegated child.
         if (!HeadlessConversations.isHeadless(conversationId) &&
-            me.rerere.rikkahub.subagent.SubAgentSurface.frozenFor(conversationId) == null
+            me.rerere.rikkahub.subagent.SubAgentSurface.frozenFor(conversationId) == null &&
+            // 用户把「子代理派发」关掉了（NEVER）时，subagent_run 不注册；mission_dispatch
+            // 是同一件事的并行版本，也必须一起消失，否则那个开关等于没关。
+            settings.subAgentDispatchProfile != me.rerere.rikkahub.subagent.SubAgentDispatchProfile.NEVER
         ) {
             addAll(
                 createMissionDispatchTools(
@@ -2347,7 +2350,10 @@ class ChatService(
         // approval, no depth cap and no budget: an unapproved fork bomb that also bypassed the
         // sub-agent surface. A frozen surface means we are already inside a delegated child.
         if (!HeadlessConversations.isHeadless(conversationId) &&
-            me.rerere.rikkahub.subagent.SubAgentSurface.frozenFor(conversationId) == null
+            me.rerere.rikkahub.subagent.SubAgentSurface.frozenFor(conversationId) == null &&
+            // 用户把「子代理派发」关掉了（NEVER）时，subagent_run 不注册；mission_dispatch
+            // 是同一件事的并行版本，也必须一起消失，否则那个开关等于没关。
+            settings.subAgentDispatchProfile != me.rerere.rikkahub.subagent.SubAgentDispatchProfile.NEVER
         ) {
             addAll(
                 createMissionDispatchTools(

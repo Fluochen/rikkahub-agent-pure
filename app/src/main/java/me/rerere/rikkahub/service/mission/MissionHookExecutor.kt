@@ -25,12 +25,20 @@ class MissionHookExecutor(
 ) {
 
     /** 跑一条 hook；未配置（空白命令）返回 null，调用方据此完全跳过。 */
+    /**
+     * @param status 本轮 run 的终态名（ROUND_END / BEFORE_DONE 用）
+     * @param tool 触发这条 hook 的工具名（TOOL_BEFORE / TOOL_AFTER 用）
+     *
+     * 两个占位符以前共用一个参数槽位：工具 hook 把工具名塞进 `status`，而
+     * [MissionHookContext.tool] 恒为 null，于是 `{tool}` 永远展开成空字符串。
+     */
     suspend fun run(
         mission: MissionEntity,
         hook: MissionHook,
         round: Int,
         runId: String? = null,
         status: String? = null,
+        tool: String? = null,
     ): MissionHookOutcome? {
         if (!hook.isRunnable) return null
         val workspaceId = mission.workspaceIdOrNull ?: return MissionHookOutcome(
@@ -40,7 +48,13 @@ class MissionHookExecutor(
         )
         val command = MissionHookSpec.expand(
             hook.command,
-            MissionHookContext(missionId = mission.id, round = round, runId = runId, status = status),
+            MissionHookContext(
+                missionId = mission.id,
+                round = round,
+                runId = runId,
+                status = status,
+                tool = tool,
+            ),
         )
         val startedAt = System.currentTimeMillis()
         val result = runCatching {

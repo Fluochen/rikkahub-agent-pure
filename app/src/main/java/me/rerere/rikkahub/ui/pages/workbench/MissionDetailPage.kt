@@ -966,7 +966,11 @@ private fun LimitsDialog(
     var deadlineHours by remember(limits) {
         mutableStateOf(
             limits.deadlineAt
-                ?.let { ((it - System.currentTimeMillis()).coerceAtLeast(0L) / 3_600_000L).toString() }
+                // 向上取整：剩 40 分钟时整数除法得到 0，保存后 now + 0 立刻过期。
+                ?.let {
+                    ((it - System.currentTimeMillis()).coerceAtLeast(0L) + 3_599_999L) / 3_600_000L
+                }
+                ?.toString()
                 .orEmpty()
         )
     }
@@ -994,7 +998,13 @@ private fun LimitsDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = stringResource(R.string.mission_limits_title)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // 七个输入框 + 两段多行文本，小屏上不加滚动会被键盘顶掉一半且够不到保存。
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Text(
                     text = stringResource(R.string.mission_limits_desc),
                     style = MaterialTheme.typography.bodySmall,
@@ -1653,6 +1663,8 @@ private fun ChecksDialog(
                     onSave(
                         limits.copy(
                             maxCheckFailures = value,
+                            // 这个对话框只管三条「时机」检查；工具级 hook 在 LimitsDialog 里编辑。
+                            // 直接覆盖 limits.hooks 会把 TOOL_BEFORE / TOOL_AFTER 静默清空。
                             hooks = MissionHookSpec.of(
                                 roundEnd = roundEnd,
                                 beforeDone = beforeDone,
@@ -1662,7 +1674,9 @@ private fun ChecksDialog(
                                 } else {
                                     MissionHook.ACTION_WARN
                                 },
-                            ),
+                            ) + limits.hooks.filter {
+                                it.at == MissionHook.WHEN_TOOL_BEFORE || it.at == MissionHook.WHEN_TOOL_AFTER
+                            },
                         )
                     )
                 },

@@ -105,10 +105,9 @@ fun createMissionDispatchTools(
                                         )
                                     })
                                 }
-                                put("kind", buildJsonObject {
-                                    put("type", "string")
-                                    put("description", "Ledger kind; defaults to subagent.")
-                                })
+                                // 不再暴露 `kind`：模型可以填 "mission"，把子会话伪装成任务轮次，
+                                // 而 ChatServiceRunService 看到 mission 就会拿 domainId 去
+                                // MissionSessions.bind()，覆盖父任务会话的真实绑定。
                             })
                             put("required", buildJsonArray { add(JsonPrimitive("prompt")) })
                         })
@@ -157,9 +156,8 @@ fun createMissionDispatchTools(
                     title = task["title"]?.jsonPrimitive?.contentOrNull,
                     headless = true,
                     missionId = missionId,
-                    kind = task["kind"]?.jsonPrimitive?.contentOrNull
-                        ?.let { wire -> AgentRunKind.fromWire(wire) }
-                        ?: AgentRunKind.SubAgent,
+                    // 派发出来的永远是子代理，kind 不接受模型输入（见 schema 处的说明）。
+                    kind = AgentRunKind.SubAgent,
                     systemPrompt = expert?.systemPrompt?.takeIf { it.isNotBlank() },
                     modelId = expert?.modelId?.let { raw -> runCatching { Uuid.parse(raw) }.getOrNull() },
                 )

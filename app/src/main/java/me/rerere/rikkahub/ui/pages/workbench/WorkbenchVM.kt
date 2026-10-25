@@ -31,6 +31,8 @@ class WorkbenchVM(
     private val missionCreation: me.rerere.rikkahub.service.mission.MissionCreationService,
     /** Deleted tasks drop their round snapshots with them — see [delete]. */
     private val snapshotStore: me.rerere.rikkahub.data.mission.MissionSnapshotStore,
+    /** 从列表直接暂停/完成/删除时，正在跑的那一轮必须一起停下来。 */
+    private val chatService: me.rerere.rikkahub.service.ChatService,
     subAgentRegistry: SubAgentRegistry,
 ) : ViewModel() {
 
@@ -172,14 +174,31 @@ class WorkbenchVM(
         }
     }
 
+    /** 停掉这一轮生成并把姿态落回 IDLE；任务不在跑时是空操作。 */
+    private suspend fun stopLiveRound(id: String) {
+        val mission = runCatching { missionRepository.getById(id) }.getOrNull() ?: return
+        if (!mission.executionStateEnum.isLive) return
+        mission.conversationId
+            ?.let { raw -> runCatching { kotlin.uuid.Uuid.parse(raw) }.getOrNull() }
+            ?.let { conversationId -> runCatching { chatService.stopGeneration(conversationId) } }
+        missionRepository.updateExecutionState(
+            id,
+            me.rerere.rikkahub.data.mission.MissionExecutionState.IDLE,
+        )
+    }
+
     fun transition(id: String, to: MissionStatus) {
         viewModelScope.launch {
+            // 列表上的暂停/完成/归档以前只改任务状态行：正在跑的那一轮不会收到任何通知，
+            // execution_state 留在 RUNNING，前台服务常驻、定时触发永远 SKIPPED_BUSY。
+            if (to != MissionStatus.ACTIVE) runCatching { stopLiveRound(id) }
             missionRepository.transition(id, to)
         }
     }
 
     fun delete(id: String) {
         viewModelScope.launch {
+            runCatching { stopLiveRound(id) }
             // The detail page already purges before deleting; this list path did not, so every
             // task deleted from the workbench left up to 12 × 128 MB of round snapshots on disk
             // forever. Deleting the row must not be the only thing that happens.
