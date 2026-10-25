@@ -202,6 +202,14 @@ class MissionEngine(
                     buildJsonObject {
                         put("tool", toolName)
                         put("args", argsJson.take(500))
+                        // 批 I — 失败归因：分类结果进 payload，供督导统计与下一轮交接使用。
+                        // 分类函数是纯文本判定，认不出来就是 null，不影响事件本身的写入。
+                        val failure = me.rerere.rikkahub.runtime.tools.ToolFailureClassifier.detect(outputJson)
+                        if (failure != null) {
+                            put("failed", true)
+                            put("failureKind", failure.kind.name)
+                            if (failure.detail.isNotBlank()) put("failureDetail", failure.detail)
+                        }
                     }
                 ),
                 missionId = missionIdFor(conversationId),

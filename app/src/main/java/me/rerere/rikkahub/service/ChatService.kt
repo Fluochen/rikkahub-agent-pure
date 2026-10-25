@@ -513,6 +513,8 @@ class ChatService(
     private val missionEngine: me.rerere.rikkahub.data.mission.MissionEngine,
     /** One creation path for missions the model starts with `mission_create`. */
     private val missionCreationProvider: () -> me.rerere.rikkahub.service.mission.MissionCreationService,
+    /** 批 I — 任务级工具 hook（PreToolUse 拦截 / PostToolUse 观察）。 */
+    private val missionToolHooks: me.rerere.rikkahub.service.mission.MissionToolHooks,
     /** P5 — per-step run breakpoints, written from the loop's checkpoint hook. */
     private val runCheckpointRepository: me.rerere.rikkahub.data.agentrun.RunCheckpointRepository,
     /** P6 — multi-run orchestration behind the `mission_dispatch` tool. */
@@ -2136,6 +2138,19 @@ class ChatService(
                 },
                 onToolExecuted = { toolName, argsJson, outputJson ->
                     missionEngine.onToolExecuted(conversation.id.toString(), toolName, argsJson, outputJson)
+                    // 批 I — PostToolUse：观察型 hook（lint / 格式化检查）不阻塞工具循环，
+                    // 失败只进 run journal；任务收尾/交接时会读到。
+                    appScope.launch {
+                        runCatching {
+                            missionToolHooks.after(conversation.id.toString(), toolName, outputJson)
+                        }
+                    }
+                },
+                // 批 I — PreToolUse：拦截型 hook。返回理由即不执行该工具。
+                beforeToolGate = { toolName, argsJson ->
+                    runCatching {
+                        missionToolHooks.before(conversation.id.toString(), toolName, argsJson)
+                    }.getOrNull()
                 },
                 // 批 E — a mission round that stops on a tool approval shows WAITING_APPROVAL
                 // instead of RUNNING; onApprovalResolved (handleToolApproval) restores RUNNING.
