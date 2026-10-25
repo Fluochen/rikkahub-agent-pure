@@ -229,6 +229,16 @@ class MissionDetailVM(
 
     fun delete(onDeleted: () -> Unit) {
         viewModelScope.launch {
+            // 删除正在跑的任务：先停生成，否则它会在行被删掉之后继续烧 token，且没有任何
+            // 地方能再停下来（任务已经不存在了）。
+            runCatching {
+                val mission = missionRepository.getById(missionId)
+                if (mission != null && mission.executionStateEnum.isLive) {
+                    mission.conversationId
+                        ?.let { raw -> runCatching { kotlin.uuid.Uuid.parse(raw) }.getOrNull() }
+                        ?.let { conversationId -> runCatching { chatService.stopGeneration(conversationId) } }
+                }
+            }
             runCatching { snapshotStore.purge(missionId) }
             missionRepository.delete(missionId)
             onDeleted()

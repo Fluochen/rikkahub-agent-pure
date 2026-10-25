@@ -258,6 +258,8 @@ class MissionSupervisor(
             if (status == RUN_STATUS_CANCELLED) {
                 // The user stopped this run — do not resurrect it.
                 missionRepository.updateExecutionState(missionId, MissionExecutionState.IDLE)
+                // 只改 DB 不够：前台服务里那一条是按 missionId 熄的，不清就一直在通知栏。
+                markIdle(missionId)
                 return
             }
             // 批 E — the round is parked on a user approval, not finished. The generation
@@ -409,7 +411,13 @@ class MissionSupervisor(
                 is ContinueDecision.Complete -> complete(mission, events, runId)
                 is ContinueDecision.Block -> block(mission, decision.reason)
                 is ContinueDecision.Resume -> resume(mission, checkNote = failureNote)
-                is ContinueDecision.Yield, is ContinueDecision.NoOp -> Unit // leave it to the user
+                is ContinueDecision.Yield -> {
+                    // 交给用户：这一轮结束了，姿态必须落回 IDLE。留成 RUNNING 会让前台服务
+                    // 常驻、定时触发永远 SKIPPED_BUSY，回退快照也被「任务正在执行」挡住。
+                    missionRepository.updateExecutionState(mission.id, MissionExecutionState.IDLE)
+                    markIdle(mission.id)
+                }
+                is ContinueDecision.NoOp -> Unit
             }
         }
     }
@@ -616,6 +624,8 @@ class MissionSupervisor(
             continuePrompt = prompt,
         )
         if (!outcome.ok) {
+            missionRepository.updateExecutionState(mission.id, MissionExecutionState.IDLE)
+            markIdle(mission.id)
             notify("任务续跑失败：${mission.title}", outcome.error ?: "unknown")
         }
     }
@@ -726,6 +736,9 @@ class MissionSupervisor(
             continuePrompt = prompt,
         )
         if (!launch.ok) {
+            // 返工没起来：姿态回滚，否则任务卡在 RUNNING 且再也不会被督导拾起。
+            missionRepository.updateExecutionState(mission.id, MissionExecutionState.IDLE)
+            markIdle(mission.id)
             notify("任务返工启动失败：${mission.title}", launch.error ?: "unknown")
         }
         return false
@@ -808,6 +821,9 @@ class MissionSupervisor(
             continuePrompt = prompt,
         )
         if (!launch.ok) {
+            // 返工没起来：姿态回滚，否则任务卡在 RUNNING 且再也不会被督导拾起。
+            missionRepository.updateExecutionState(mission.id, MissionExecutionState.IDLE)
+            markIdle(mission.id)
             notify("任务返工启动失败：${mission.title}", launch.error ?: "unknown")
         }
         return false

@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.service.mission
 
 import me.rerere.rikkahub.data.mission.MissionRepository
+import me.rerere.rikkahub.data.mission.acceptanceCriteria
 import me.rerere.rikkahub.data.mission.limits
 import me.rerere.rikkahub.data.mission.workspaceIdOrNull
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
@@ -75,17 +76,21 @@ class MissionForkService(
             MissionCreationService.Request(
                 title = "${source.title}$FORK_TITLE_SUFFIX",
                 goal = goal,
+                // 分叉要继承父任务的验收标准与工作流，否则「照父任务的做法继续」这一层信息
+                // 在子任务里直接丢了，验收项也要用户重新勾一遍。
+                acceptance = runCatching { source.acceptanceCriteria }.getOrDefault(emptyList()),
+                workflow = source.workflowPath,
                 workspaceId = workspace.id,
                 assistantId = source.assistantId,
                 startNow = true,
+                // 必须在发车之前落地，否则第 1 轮以默认 limits / AUTO 审批跑。
+                configure = { missionId ->
+                    missionRepository.updateLimits(missionId, source.limits.copy(deadlineAt = null))
+                    missionRepository.updateApprovalMode(missionId, source.approvalMode)
+                },
             )
         )
 
-        // 继承运行时配置：限制（去掉 deadline）、审批姿态、结构化验收在 limits 里随之带过去。
-        runCatching {
-            missionRepository.updateLimits(creation.mission.id, source.limits.copy(deadlineAt = null))
-            missionRepository.updateApprovalMode(creation.mission.id, source.approvalMode)
-        }
         runCatching {
             runEventRepository.emit(
                 type = RunEventType.NOTE,

@@ -40,6 +40,14 @@ class MissionCreationService(
         val assistantId: String? = null,
         /** true launches round 1 immediately; false creates the mission and waits for the user. */
         val startNow: Boolean = true,
+        /**
+         * 启动第 1 轮之前的最后一次配置（继承 limits / 审批姿态等）。
+         *
+         * 分叉以前先 `createAndStart(startNow = true)` 再 `updateLimits` / `updateApprovalMode`：
+         * 第 1 轮在配置之前就发车了，子任务于是以「空 limits + approvalMode=null（=AUTO 免审）」
+         * 跑起来，父任务的钩子、预算与审批姿态全部失效。
+         */
+        val configure: (suspend (String) -> Unit)? = null,
     )
 
     data class Outcome(
@@ -83,6 +91,8 @@ class MissionCreationService(
             assistantId = request.assistantId,
         )
 
+        // 配置必须先于第 1 轮：它决定这一轮的审批姿态与预算。
+        request.configure?.let { configure -> runCatching { configure(mission.id) } }
         if (!request.startNow) {
             return Outcome(mission, workspace.id, workflowPath, started = false)
         }

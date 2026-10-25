@@ -50,7 +50,9 @@ class MissionToolHooks(
                 hook = hook,
                 round = mission.resumeCount + 1,
                 runId = mission.lastRunId,
-                status = toolName,
+                // 工具名进 `tool`，`status` 留空：{tool} / {status} 是两个占位符，
+                // 以前共用 status 这个槽位，`{tool}` 就永远是空的。
+                tool = toolName,
             ) ?: continue
             if (outcome.skippedReason != null) {
                 journal(mission.id, conversationId, mission.lastRunId, "tool_hook_skipped", outcome.describe())
@@ -86,7 +88,9 @@ class MissionToolHooks(
                 hook = hook,
                 round = mission.resumeCount + 1,
                 runId = mission.lastRunId,
-                status = toolName,
+                // 工具名进 `tool`，`status` 留空：{tool} / {status} 是两个占位符，
+                // 以前共用 status 这个槽位，`{tool}` 就永远是空的。
+                tool = toolName,
             ) ?: continue
             when {
                 outcome.skippedReason != null -> journal(
