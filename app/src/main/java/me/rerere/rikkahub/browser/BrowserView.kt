@@ -532,7 +532,18 @@ private fun WebViewHost(
                         // a browsed page (or eval'd JS) could steer the WebView into
                         // app-private files and exfiltrate them via browser_get_text.
                         if (scheme == "file") {
-                            return view?.url?.startsWith("file:", ignoreCase = true) != true
+                            // 当前文档是 file:// 才能跳 file://（技能卡片在自己的子页面之间
+                            // 走动）。但「能跳」不等于「跳到哪都行」：放行范围收紧到当前文档
+                            // 所在目录、技能目录与技能包装页目录三棵树，否则技能页一行
+                            // location.href 就能把应用私有文件读进 WebView。
+                            val currentUrl = view?.url
+                            if (currentUrl?.startsWith("file:", ignoreCase = true) != true) return true
+                            val roots = buildList {
+                                fileUrlPath(currentUrl)?.let { p -> File(p).parentFile?.let { add(it) } }
+                                add(File(ctx.filesDir, "skills"))
+                                add(File(ctx.cacheDir, "skill-webview"))
+                            }
+                            return !isWithinAnyRoot(fileUrlPath(url.toString()), roots)
                         }
                         // about:/data:/javascript: — let the WebView handle them itself.
                         if (scheme == "about" || scheme == "data" || scheme == "javascript") {

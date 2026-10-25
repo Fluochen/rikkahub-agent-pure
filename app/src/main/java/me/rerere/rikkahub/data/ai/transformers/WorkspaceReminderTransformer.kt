@@ -33,7 +33,9 @@ class WorkspaceReminderTransformer(
         ctx: TransformerContext,
         messages: List<UIMessage>,
     ): List<UIMessage> {
-        val workspaceId = ctx.assistant.workspaceId?.toString()
+        // 任务会话挂的是任务自己的工作区：快照 / hook / 验收都在那里，提示词也必须指向那里，
+        // 否则模型被告知的目录和系统检查的目录是两个。
+        val workspaceId = ctx.missionWorkspaceId ?: ctx.assistant.workspaceId?.toString()
         val workspace = workspaceId?.let { workspaceRepository.getById(it) }
         // 仅在未解析到绑定的 workspace 时才需要查询是否存在其它 workspace (短路避免多余查询)
         val hasAnyWorkspace = workspace != null || workspaceRepository.getAll().isNotEmpty()

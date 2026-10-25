@@ -17,6 +17,11 @@ class TransformerContext(
     val conversationLorebookIds: Set<Uuid> = emptySet(),
     val processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
     val workspaceCwd: String? = null,
+    /**
+     * 任务会话绑定的任务工作区。非空时覆盖 [Assistant.workspaceId] —— 任务轮次的世界是
+     * 任务自己的工作区，不是助理的默认工作区。
+     */
+    val missionWorkspaceId: String? = null,
 )
 
 interface MessageTransformer {
@@ -71,6 +76,7 @@ suspend fun List<UIMessage>.transforms(
     conversationLorebookIds: Set<Uuid> = emptySet(),
     processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
     workspaceCwd: String? = null,
+    missionWorkspaceId: String? = null,
 ): List<UIMessage> {
     val ctx = TransformerContext(
         context = context,
@@ -81,6 +87,7 @@ suspend fun List<UIMessage>.transforms(
         conversationLorebookIds = conversationLorebookIds,
         processingStatus = processingStatus,
         workspaceCwd = workspaceCwd,
+        missionWorkspaceId = missionWorkspaceId,
     )
     return transformers.fold(this) { acc, transformer ->
         transformer.transform(ctx, acc)

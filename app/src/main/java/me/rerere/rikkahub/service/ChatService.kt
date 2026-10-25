@@ -1739,7 +1739,7 @@ class ChatService(
                 ),
             )
         )
-        addAll(createWorkspaceToolsIfReady(surfaceAssistant.workspaceId?.toString(), conversation.workspaceCwd))
+        addAll(createWorkspaceToolsIfReady(workspaceIdForTurn(surfaceAssistant, conversationId), conversation.workspaceCwd))
         // T-06 / (7) - cold memory (Markdown knowledge base). Same on both build paths so a
         // regenerate sees the surface the first pass had. Off unless enabled AND configured.
         addAll(createColdMemoryToolsIfConfigured(surfaceAssistant))
@@ -2076,6 +2076,10 @@ class ChatService(
                 Log.w(TAG, "fact injection failed; sending no facts this turn", error)
                 FactInjection(emptyList(), omitted = 0)
             }
+            // 任务会话的系统提示必须指向任务工作区（与工具、验收同一本账）。
+            val missionWorkspaceIdForContext = runCatching {
+                missionEngine.workspaceIdFor(conversationId.toString())
+            }.getOrNull()
             generationLoop.generateText(
                 settings = settings.toLoopSettings(),
                 model = model,
@@ -2227,6 +2231,7 @@ class ChatService(
                         conversationLorebookIds = conversation.lorebookIds,
                         processingStatus = session.processingStatus,
                         workspaceCwd = conversation.workspaceCwd,
+                        missionWorkspaceId = missionWorkspaceIdForContext,
                     )
                 },
                 outputTransform = { msgs ->
@@ -2292,7 +2297,7 @@ class ChatService(
                     // options did not already allow. There is no other mode: nothing attaches the
                     // whole surface, which is what makes the embedding model a prerequisite rather
                     // than an enhancement.
-                    addAll(createWorkspaceToolsIfReady(surfaceAssistant.workspaceId?.toString(), conversation.workspaceCwd))
+                    addAll(createWorkspaceToolsIfReady(workspaceIdForTurn(surfaceAssistant, conversationId), conversation.workspaceCwd))
                     // T-06 / (7) - cold memory, mirroring the regenerate path above.
                     addAll(createColdMemoryToolsIfConfigured(surfaceAssistant))
                     // The recovery path for a truncated tool result, mirrored from the

@@ -370,6 +370,10 @@ val dataSourceModule = module {
                 stdout = result.stdout,
                 stderr = result.stderr,
                 timedOut = result.timedOut,
+                // Rootfs 没装 / proot 缺失时 Runner 不抛异常，只是返回 127。这里必须把它翻成
+                // error，否则 hook 与验收会把它当成「命令跑了、退出码非 0」= 工作不合格：
+                // 默认自动创建的「任务工作区」上每条验收都失败，任务永远完不成。
+                error = result.stderr.ifBlank { "shell unavailable" }.takeIf { result.infraFailure },
             )
         }
     }
