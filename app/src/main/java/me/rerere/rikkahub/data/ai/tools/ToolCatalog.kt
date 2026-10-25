@@ -371,8 +371,9 @@ fun buildToolCatalogTools(
             activate it with tool_open, then call it right away: it becomes callable on your
             very next step, still inside this same turn.
             If it reports that semantic search is unavailable, the embedding model is missing or
-            still warming up. Say so to the user and stop rather than retrying with other words:
-            searching again cannot fix it.
+            still warming up. tool_browse lists the same catalogue by name with paging, so use it
+            and open what you need instead of giving up; do not retry the same search with other
+            words, which cannot fix a missing model.
             """.trimIndent(),
         parameters = {
             InputSchema.Obj(

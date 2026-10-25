@@ -271,7 +271,8 @@ class ToolVectorIndex(
 
         const val NO_MODEL_NOTE =
             "Semantic search is unavailable: no embedding model is installed. Tell the user to " +
-                "install one (assistant memory page -> Embedding model), then search again."
+                "install one (assistant memory page -> Embedding model). Meanwhile `tool_browse` " +
+                "lists the whole catalogue by name, paged — use it and open the names you need."
 
         const val WARMING_NOTE =
             "Semantic search is not ready yet: the tool catalog is still being embedded. " +
