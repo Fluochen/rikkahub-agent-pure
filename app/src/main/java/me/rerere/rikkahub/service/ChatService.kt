@@ -713,6 +713,19 @@ class ChatService(
 
     // 错误状态
     private val _errors = MutableStateFlow<List<ChatError>>(emptyList())
+    /**
+     * 每个会话「生成异常中止」的次数（API 4xx/5xx、网络断开、流式解析崩了……）。
+     *
+     * 这类失败不会向上抛：`handleMessageComplete` 把它转成一条 ChatError 就正常收尾了，
+     * 于是 run 的生命周期以为自己跑完了 —— 报错中断的轮次被记成 COMPLETED，断点被删、
+     * AFTER_FAILURE 钩子永不触发。计数只增，调用方用「本轮的计数有没有变」来判断，
+     * 不会因为残留状态误判。
+     */
+    private val generationFailures = java.util.concurrent.ConcurrentHashMap<Uuid, Long>()
+
+    /** 本会话累计的生成失败次数（用于判定某一轮是不是报错中断的）。 */
+    fun generationFailureCount(conversationId: Uuid): Long =
+        generationFailures[conversationId] ?: 0L
     val errors: StateFlow<List<ChatError>> = _errors.asStateFlow()
 
     fun addError(
@@ -2888,6 +2901,8 @@ class ChatService(
             }
 
             it.printStackTrace()
+            // 这一轮是「异常中止」，不是「正常跑完」：让 run 结算能分辨出来。
+            generationFailures.merge(conversationId, 1L, Long::plus)
             addError(it, conversationId, title = context.getString(R.string.error_title_generation))
             Logging.log(TAG, "handleMessageComplete: $it")
             Logging.log(TAG, it.stackTraceToString())
