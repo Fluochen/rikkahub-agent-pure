@@ -41,6 +41,9 @@ import me.rerere.rikkahub.data.runtime.InstanceRegistry
 import me.rerere.rikkahub.data.runtime.InstanceState
 import me.rerere.rikkahub.data.runtime.RuntimeInstance
 import me.rerere.rikkahub.ui.components.nav.BackButton
+import me.rerere.rikkahub.ui.pages.setting.instances.sections.AppHostInstanceSection
+import me.rerere.rikkahub.ui.pages.setting.instances.sections.SshInstanceSection
+import me.rerere.rikkahub.ui.pages.setting.instances.sections.WorkspaceInstanceSection
 import me.rerere.rikkahub.ui.pages.setting.termux.SettingTermuxViewModel
 import me.rerere.rikkahub.ui.pages.setting.termux.TermuxSettingsSections
 import me.rerere.rikkahub.ui.context.LocalNavController
@@ -122,6 +125,33 @@ fun InstanceDetailPage(kindName: String, key: String) {
                         }
                     },
                 )
+            }
+
+            // 三家各自带"自己的世界"：这一节只渲染**当前实例**，增删与浏览仍留在原来的
+            // 列表页（那是"管理所有"，不是"配置这一个"）。见 InstanceSections 的说明。
+            when (kind) {
+                InstanceKind.APP_HOST -> item(key = "app-host") {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SectionTitle(stringResource(R.string.instances_section_permissions))
+                        AppHostInstanceSection()
+                    }
+                }
+
+                InstanceKind.SSH -> item(key = "ssh-host") {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SectionTitle(stringResource(R.string.instances_section_settings))
+                        SshInstanceSection(key)
+                    }
+                }
+
+                InstanceKind.WORKSPACE -> item(key = "workspace-rootfs") {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SectionTitle(stringResource(R.string.instances_section_settings))
+                        WorkspaceInstanceSection(key)
+                    }
+                }
+
+                InstanceKind.TERMUX, InstanceKind.SHIZUKU -> Unit
             }
 
             // Termux 的六个旋钮直接嵌在这里，而不是再来一个"打开设置"的跳转：

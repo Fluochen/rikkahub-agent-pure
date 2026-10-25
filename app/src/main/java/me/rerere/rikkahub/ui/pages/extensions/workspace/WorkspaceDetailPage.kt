@@ -624,7 +624,7 @@ private fun RootfsProgress(progress: RootfsInstallProgress) {
 }
 
 @Composable
-private fun InstallRootfsDialog(
+internal fun InstallRootfsDialog(
     workspace: WorkspaceEntity,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,

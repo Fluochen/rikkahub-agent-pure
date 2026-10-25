@@ -297,7 +297,7 @@ fun SettingSshPage(vm: SettingSshViewModel = koinViewModel()) {
     }
 }
 
-private fun SshHostEntity.toDraft(): SshHostDraft {
+internal fun SshHostEntity.toDraft(): SshHostDraft {
     val method = if (!privateKey.isNullOrBlank()) SshAuthMethod.PRIVATE_KEY else SshAuthMethod.PASSWORD
     return SshHostDraft(
         originalName = name,
@@ -354,7 +354,7 @@ private fun errorSupporting(error: SshHostError?): (@Composable () -> Unit)? {
 }
 
 @Composable
-private fun SshHostEditorSheet(
+internal fun SshHostEditorSheet(
     initialDraft: SshHostDraft,
     existingNames: Set<String>,
     onDismiss: () -> Unit,
