@@ -73,6 +73,8 @@ import me.rerere.ai.util.stringSafe
 import me.rerere.ai.util.toHeaders
 import me.rerere.common.android.Logging
 import me.rerere.common.http.await
+import me.rerere.common.http.jsonArrayOrNull
+import me.rerere.common.http.jsonObjectOrNull
 import me.rerere.common.http.jsonPrimitiveOrNull
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -170,19 +172,26 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
                 val models = bodyObject["models"]?.jsonArray ?: return@withContext emptyList()
 
                 models.mapNotNull {
-                    val modelObject = it.jsonObject
+                    val modelObject = it.jsonObjectOrNull ?: return@mapNotNull null
 
-                    // 忽略非chat/embedding模型
+                    // 忽略非chat/embedding模型. No `!!` on wire data: one entry that lacks a
+                    // field (Vertex-shaped listings, partner models, a future API change)
+                    // must not NPE the whole model-list refresh - skip that entry instead.
                     val supportedGenerationMethods =
-                        modelObject["supportedGenerationMethods"]!!.jsonArray
-                            .map { method -> method.jsonPrimitive.content }
+                        modelObject["supportedGenerationMethods"]?.jsonArrayOrNull
+                            ?.mapNotNull { method -> method.jsonPrimitiveOrNull?.contentOrNull }
+                            ?: return@mapNotNull null
                     if ("generateContent" !in supportedGenerationMethods && "embedContent" !in supportedGenerationMethods) {
                         return@mapNotNull null
                     }
 
+                    val modelId = modelObject["name"]?.jsonPrimitiveOrNull?.contentOrNull
+                        ?.substringAfter("/")?.takeIf { name -> name.isNotBlank() }
+                        ?: return@mapNotNull null
                     Model(
-                        modelId = modelObject["name"]!!.jsonPrimitive.content.substringAfter("/"),
-                        displayName = modelObject["displayName"]!!.jsonPrimitive.content,
+                        modelId = modelId,
+                        displayName = modelObject["displayName"]?.jsonPrimitiveOrNull?.contentOrNull
+                            ?: modelId,
                         type = if ("generateContent" in supportedGenerationMethods) ModelType.CHAT else ModelType.EMBEDDING,
                         // `inputTokenLimit` is the window the API advertises for this model; without
                         // it the percent-based context features (reminder, auto compaction) have

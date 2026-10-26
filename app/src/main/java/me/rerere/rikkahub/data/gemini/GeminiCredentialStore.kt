@@ -40,8 +40,15 @@ internal class GeminiCredentialStore(
         val encrypted = cipher.doFinal(json.encodeToString(state).encodeToByteArray())
         val temporary = File(file.parentFile, "$FILE_NAME.tmp")
         temporary.writeBytes(cipher.iv + encrypted)
-        temporary.copyTo(file, overwrite = true)
-        temporary.delete()
+        // Atomic rename in the same directory, NOT copyTo over the live file: this file is the
+        // only copy of the accounts (rotated refresh tokens included), and a process death
+        // mid-copy used to leave it truncated - read() then silently fell back to an empty
+        // state and every signed-in account had to log in again. copyTo stays as the fallback
+        // for filesystems where renaming onto an existing target fails.
+        if (!temporary.renameTo(file)) {
+            temporary.copyTo(file, overwrite = true)
+            temporary.delete()
+        }
     }
 
     private fun getOrCreateKey(): SecretKey {

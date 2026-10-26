@@ -90,4 +90,25 @@ class TelegramTextChunkerTest {
         assertTrue(parts[0].endsWith("b"))
         assertTrue(parts[1].startsWith("c"))
     }
+
+    @Test fun `paragraph break at the cap never emits an over-long chunk`() {
+        // "\n\n" STARTING exactly at index n: lastIndexOf's start index is inclusive, so
+        // the old search-from-n plus `+ 2` emitted an n + 2 chunk here.
+        val s = "a".repeat(100) + "\n\n" + "b".repeat(50)
+        val parts = chunkForTelegram(s, 100)
+        for ((i, p) in parts.withIndex()) {
+            assertTrue("chunk $i must be <= 100 chars but was ${p.length}", p.length <= 100)
+        }
+        assertEquals(100, parts[0].length)
+    }
+
+    @Test fun `degenerate caps terminate instead of spinning`() {
+        // n = 1 used to stall: the surrogate walk-back could land on a zero cut and the
+        // remainder never shrank. The clamp must keep every call making progress.
+        val s = "ab cd".repeat(10)
+        val parts = chunkForTelegram(s, 1)
+        assertTrue(parts.size > 1)
+        assertEquals(s, parts.joinToString(""))
+        assertTrue(chunkForTelegram("hello", 0).isNotEmpty())
+    }
 }
