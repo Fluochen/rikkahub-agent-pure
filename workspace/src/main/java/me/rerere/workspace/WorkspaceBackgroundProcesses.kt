@@ -145,10 +145,12 @@ class WorkspaceBackgroundProcesses(
 
     private fun Entry.toStatus(): BackgroundStatus {
         val alive = process.isAlive
-        if (!alive) {
+        if (!alive && drainJoinAttempted.compareAndSet(false, true)) {
             // 进程刚退出时, drain 线程可能还没来得及把管道里剩余的字节写入 TailBuffer;
             // 这里等一下(有界), 确保退出后上报的 output 是完整的, 呼应 readResult 里
-            // 对 StreamCollector 的 join(1_000) 处理
+            // 对 StreamCollector 的 join(1_000) 处理。只在第一次状态查询时等: 若孙进程
+            // 继承了管道 fd 一直不关, drain 线程会永久阻塞, 每次 list/status 都 join
+            // 一次会让每次查询白付 2 秒。
             stdoutDrainer.join(1_000)
             stderrDrainer.join(1_000)
         }
@@ -180,6 +182,21 @@ class WorkspaceBackgroundProcesses(
         val stderr = TailBuffer(MAX_BG_OUTPUT_CHARS)
         val stdoutDrainer = Drainer(process.inputStream, stdout)
         val stderrDrainer = Drainer(process.errorStream, stderr)
+        val drainJoinAttempted = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        init {
+            // Background tasks have no stdin API ([WorkspaceShellRunner.start] ignores
+            // context.stdin), so close the pipe immediately: a command that reads stdin
+            // (`cat`, `gh auth login`, anything prompt-driven) must see EOF, not an open
+            // pipe nobody will ever write to. Without this it blocks forever, pinning one
+            // of only [MAX_BG_PROCESSES] slots per root until manually killed. The
+            // foreground path closes stdin for the same reason (see Process.readResult).
+            try {
+                process.outputStream.close()
+            } catch (_: IOException) {
+                // Process already exited; nothing to close.
+            }
+        }
     }
 }
 

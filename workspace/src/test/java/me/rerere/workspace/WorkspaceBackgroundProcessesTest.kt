@@ -125,6 +125,16 @@ class WorkspaceBackgroundProcessesTest {
     }
 
     @Test
+    fun `start closes stdin so a command reading it sees EOF`() {
+        val registry = WorkspaceBackgroundProcesses()
+        val process = FakeProcess()
+
+        registry.start("root-a", process, "cat", "")
+
+        assertTrue(process.stdin.closed)
+    }
+
+    @Test
     fun `status reports exit code once the process has exited`() {
         val registry = WorkspaceBackgroundProcesses()
         val process = FakeProcess()
@@ -169,11 +179,32 @@ class WorkspaceBackgroundProcessesTest {
         val root = "test-workspace"
         manager.ensureWorkspace(root)
 
-        val started = manager.startBackground(root, "cat")
+        // `sleep`, not `cat`: background stdin is closed at registration, so `cat`
+        // now exits on EOF immediately instead of blocking for the kill.
+        val started = manager.startBackground(root, "sleep 60")
         try {
             assertTrue(manager.backgroundStatus(root, started.id)?.running == true)
             assertTrue(manager.killBackground(root, started.id))
             assertNull(manager.backgroundStatus(root, started.id))
+        } finally {
+            manager.killBackground(root, started.id)
+        }
+    }
+
+    @Test
+    fun `background command reading stdin exits on EOF instead of hanging`() {
+        val baseDir = Files.createTempDirectory("workspace-bg-stdin-test").toFile()
+        val manager = WorkspaceManager(baseDir)
+        val root = "test-workspace"
+        manager.ensureWorkspace(root)
+
+        // `cat` with no input only terminates when its stdin reaches EOF. Before the
+        // stdin-close fix this blocked forever, pinning a background slot.
+        val started = manager.startBackground(root, "cat")
+        try {
+            val finished = pollUntilFinished(manager, root, started.id)
+            assertEquals(0, finished.exitCode)
+            assertEquals("", finished.stdout)
         } finally {
             manager.killBackground(root, started.id)
         }
@@ -207,7 +238,9 @@ class WorkspaceBackgroundProcessesTest {
             alive = false
         }
 
-        override fun getOutputStream(): OutputStream = ByteArrayOutputStream()
+        val stdin = RecordingOutputStream()
+
+        override fun getOutputStream(): OutputStream = stdin
         override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
         override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
         override fun waitFor(): Int {
@@ -225,5 +258,17 @@ class WorkspaceBackgroundProcessesTest {
         }
 
         override fun isAlive(): Boolean = alive
+    }
+
+    /** OutputStream that records whether close() was called (FakeProcess stdin). */
+    private class RecordingOutputStream : ByteArrayOutputStream() {
+        @Volatile
+        var closed = false
+            private set
+
+        override fun close() {
+            closed = true
+            super.close()
+        }
     }
 }

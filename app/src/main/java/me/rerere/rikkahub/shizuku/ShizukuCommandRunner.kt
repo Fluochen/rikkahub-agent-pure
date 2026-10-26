@@ -45,7 +45,15 @@ internal object ShizukuCommandRunner {
         val stderrThread = Thread({ runCatching { process.errorStream.copyTo(stderrSink) } }, "shizuku-stderr")
             .apply { isDaemon = true; start() }
 
-        val finished = process.waitFor(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+        val finished = try {
+            process.waitFor(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+        } catch (e: InterruptedException) {
+            // Caller thread interrupted (e.g. runInterruptible cancellation): do not
+            // leave a shell-UID command running to completion unsupervised. Kill it,
+            // mirroring Process.readResult in the workspace runner, then propagate.
+            process.destroyForcibly()
+            throw e
+        }
         if (!finished) {
             process.destroyForcibly()
             stdoutThread.join(1_000)

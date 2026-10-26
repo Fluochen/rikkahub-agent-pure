@@ -276,6 +276,11 @@ private suspend fun readUntilDone(
         val cap = tmux(context, TmuxOps.capturePaneArgv(session, lines))
         if (cap is CaptureResult.Success) {
             val elapsed = android.os.SystemClock.elapsedRealtime() - start
+            // Drop older samples once the pane content changes: evaluatePoll's settle
+            // scan stops at the first sample that differs from the latest, so anything
+            // before a change is never consulted again. Without this a busy pane
+            // accumulates a full-screen string every 200 ms for up to MAX_TIMEOUT_S.
+            if (samples.isNotEmpty() && samples.last().content != cap.stdout) samples.clear()
             samples.add(PaneSample(elapsed, cap.stdout))
             when (val d = evaluatePoll(samples, SETTLE_MS, timeoutMs, waitFor)) {
                 is PollResult.Done -> return CaptureResult.Success(d.content, reasonTag(d.reason), 0)

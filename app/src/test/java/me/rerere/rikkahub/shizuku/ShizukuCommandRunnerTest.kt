@@ -113,6 +113,33 @@ class ShizukuCommandRunnerTest {
     }
 
     @Test
+    fun `interrupting the waiting thread aborts promptly instead of waiting out the timeout`() {
+        // The subprocess itself is destroyForcibly()'d on interrupt; what is observable
+        // here is that run() rethrows InterruptedException immediately rather than
+        // letting waitFor's 60s budget run (and the sleep with it).
+        val thrown = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
+        val worker = Thread {
+            try {
+                ShizukuCommandRunner.run(
+                    command = "sleep 60",
+                    timeoutMs = 60_000,
+                    maxStdoutBytes = 8_000,
+                    maxStderrBytes = 8_000,
+                )
+            } catch (t: Throwable) {
+                thrown.set(t)
+            }
+        }
+        worker.start()
+        Thread.sleep(300)
+        worker.interrupt()
+        worker.join(5_000)
+
+        assertFalse(worker.isAlive)
+        assertTrue(thrown.get() is InterruptedException)
+    }
+
+    @Test
     fun `command finishing comfortably inside the timeout does not time out`() {
         val result = ShizukuCommandRunner.run(
             command = "echo quick",
