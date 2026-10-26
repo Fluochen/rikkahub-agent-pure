@@ -189,7 +189,24 @@ jobs:
           # tests are flavour-independent and are never reached through :app, so each module is
           # named explicitly. :runtime was extracted in P4 with 19 test files and had been
           # missing from this list since, which left the harness's pure logic ungated.
-          ./gradlew ":app:assemble${F}Release" ":app:test${F}ReleaseUnitTest" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest $FLAGS --stacktrace
+          set -o pipefail
+          ./gradlew ":app:assemble${F}Release" ":app:test${F}ReleaseUnitTest" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest $FLAGS --stacktrace 2>&1 | tee "$RUNNER_TEMP/gradle.log"
+
+      # TEMP-DIAG (#423): surface the gradle failure lines as check annotations so the
+      # failure is readable through the API where log downloads are unavailable.
+      - name: Surface gradle failure lines (temporary diagnostics)
+        if: failure()
+        run: |
+          LOG="$RUNNER_TEMP/gradle.log"
+          [ -f "$LOG" ] || exit 0
+          emit() { sed 's/%/%25/g' | head -c 4000 | while IFS= read -r l; do echo "::error ::$l"; done; }
+          grep -nE "error:|e: file://|FAILED|FAILURE:|What went wrong|Execution failed|> There were failing tests" "$LOG" | head -25 | emit
+          echo "::error ::===== gradle.log tail ====="
+          tail -n 25 "$LOG" | emit
+          find . -path "*/build/test-results/*/TEST-*.xml" | while read -r x; do
+            grep -l "<failure" "$x" >/dev/null 2>&1 && { echo "::error ::FAILING-SUITE $x"; grep -o 'testcase name="[^"]*"' "$x" | head -5 | emit; grep -A2 "<failure" "$x" | head -8 | emit; }
+          done
+          true
 
       - name: Show ${{ matrix.flavor }} APK sizes
         run: ls -la app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk || true
