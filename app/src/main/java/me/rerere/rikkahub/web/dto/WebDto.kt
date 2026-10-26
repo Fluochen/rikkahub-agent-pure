@@ -354,3 +354,14 @@ fun UIMessage.toDto() = MessageDto(
     usage = usage,
     translation = translation
 )
+
+/**
+ * POST /api/conversations/{id}/say
+ *
+ * 让 agent 主动往会话里写一句话：消息以 ASSISTANT 身份落库，
+ * 不进入用户消息队列，也不会触发一次生成。
+ */
+@Serializable
+data class SayRequest(
+    val text: String,
+)
