@@ -44,6 +44,10 @@ import me.rerere.rikkahub.web.dto.toListDto
 import me.rerere.rikkahub.utils.JsonInstant
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
+import me.rerere.ai.ui.UIMessage
+import me.rerere.rikkahub.data.model.MessageNode
+import me.rerere.rikkahub.web.dto.SayRequest
+import java.time.Instant
 
 fun Route.conversationRoutes(
     chatService: ChatService,
@@ -169,6 +173,47 @@ fun Route.conversationRoutes(
 
             chatService.saveConversation(uuid, conversation.copy(isPinned = !conversation.isPinned))
             call.respond(HttpStatusCode.OK, mapOf("status" to "updated"))
+        }
+
+        // POST /api/conversations/{id}/say - Append an unprompted ASSISTANT message
+        //
+        // 和 /messages 的分界：/messages 写的是 USER 消息并触发一次生成，
+        // 相当于 agent 冒充用户跟自己说话；/say 直接写 ASSISTANT 消息，
+        // 不排队、不生成、不冒用用户身份。
+        post("/{id}/say") {
+            val uuid = call.parameters["id"].toUuid("conversation id")
+            val request = call.receive<SayRequest>()
+            val text = request.text.trim()
+            if (text.isBlank()) throw BadRequestException("text must not be blank")
+
+            // 生成中写快照会被生成循环的下一帧覆盖，宁可让调用方等，不要静默丢消息。
+            if (chatService.getGenerationJobStateFlow(uuid).first() != null) {
+                call.respond(
+                    HttpStatusCode.Conflict,
+                    mapOf("error" to "conversation is generating", "code" to 409)
+                )
+                return@post
+            }
+
+            val conversation = conversationRepo.getConversationById(uuid)
+                ?: throw NotFoundException("Conversation not found")
+
+            // finishedAt 必须给值，否则 UI 会把这条当成还在流式输出、一直转圈。
+            val message = UIMessage.assistant(text).let { it.copy(finishedAt = it.createdAt) }
+            val node = MessageNode(messages = listOf(message), selectIndex = 0)
+
+            chatService.saveConversation(
+                uuid,
+                conversation.copy(
+                    messageNodes = conversation.messageNodes + node,
+                    updateAt = Instant.now(),
+                )
+            )
+
+            call.respond(
+                HttpStatusCode.OK,
+                mapOf("status" to "appended", "nodeId" to node.id.toString())
+            )
         }
 
         // POST /api/conversations/{id}/regenerate-title - Regenerate conversation title
