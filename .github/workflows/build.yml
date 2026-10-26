@@ -168,6 +168,20 @@ jobs:
 
       - name: Show pure APK sizes
         run: ls -la app/build/outputs/apk/pure/*.apk || true
+      - name: Assemble debug APK (auto-signed, installable)
+        run: ./gradlew :app:assembleDebug -PskipLintVital --stacktrace
+
+      - name: Show debug APK sizes
+        run: ls -la app/build/outputs/apk/debug/*.apk || true
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
 
       - name: Show ccache stats
         if: always()
