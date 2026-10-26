@@ -190,7 +190,7 @@ fun Route.conversationRoutes(
             if (chatService.getGenerationJobStateFlow(uuid).first() != null) {
                 call.respond(
                     HttpStatusCode.Conflict,
-                    mapOf("error" to "conversation is generating", "code" to 409)
+                    mapOf("error" to "conversation is generating")
                 )
                 return@post
             }
