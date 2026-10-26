@@ -201,16 +201,20 @@ internal class ChatCompletionsStreamDecoder(
         }
     }
 
-    private fun parseAnnotations(array: JsonArray): List<UIMessageAnnotation> = array.map { element ->
-        val type = element.jsonObject["type"]?.jsonPrimitive?.contentOrNull ?: error("type is null")
-        when (type) {
+    private fun parseAnnotations(array: JsonArray): List<UIMessageAnnotation> = array.mapNotNull { element ->
+        // Annotations are decorative metadata, and providers keep adding types
+        // (file_citation, container_file_citation, file_path, ...). Failing the whole
+        // stream over an annotation this build does not render would throw away the
+        // model's actual answer to protect a footnote — skip what we do not know.
+        val obj = element.jsonObjectOrNull ?: return@mapNotNull null
+        when (obj["type"]?.jsonPrimitiveOrNull?.contentOrNull) {
             "url_citation" -> UIMessageAnnotation.UrlCitation(
-                title = element.jsonObject["url_citation"]?.jsonObject
+                title = obj["url_citation"]?.jsonObjectOrNull
                     ?.get("title")?.jsonPrimitive?.contentOrNull ?: "",
-                url = element.jsonObject["url_citation"]?.jsonObject
+                url = obj["url_citation"]?.jsonObjectOrNull
                     ?.get("url")?.jsonPrimitive?.contentOrNull ?: "",
             )
-            else -> error("unknown annotation type: $type")
+            else -> null
         }
     }
 

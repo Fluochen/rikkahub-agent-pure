@@ -543,15 +543,28 @@ class ConversationRepository(
         return database.withTransaction {
             val nodes = mutableListOf<MessageNode>()
 
-            fun toMessageNode(entity: MessageNodeEntity): MessageNode {
-                val messages = JsonInstant.decodeFromString<List<UIMessage>>(entity.messages)
-                val nodeId = Uuid.parse(entity.id)
-                return MessageNode(
-                    id = nodeId,
-                    messages = messages,
-                    selectIndex = entity.selectIndex,
-                    isFavorite = favoriteNodeIds.contains(nodeId)
-                )
+            // Nullable on purpose: a row can be perfectly readable by SQLite yet undecodable
+            // as messages (corrupt JSON, a forward-incompatible backup restore, a malformed
+            // node id). The page/recovery catches below only wrap the DAO call, so without
+            // this guard one bad node failed the whole conversation load and the row-by-row
+            // recovery built for "a corrupt blob" never engaged for the corrupt-blob case.
+            // Dropping the single node matches the existing "dropping unreadable node" policy.
+            fun toMessageNode(entity: MessageNodeEntity): MessageNode? {
+                return try {
+                    val messages = JsonInstant.decodeFromString<List<UIMessage>>(entity.messages)
+                    val nodeId = Uuid.parse(entity.id)
+                    MessageNode(
+                        id = nodeId,
+                        messages = messages,
+                        selectIndex = entity.selectIndex,
+                        isFavorite = favoriteNodeIds.contains(nodeId)
+                    )
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "loadMessageNodes: dropping undecodable node (conversationId=$conversationId, nodeId=${entity.id})", e)
+                    null
+                }
             }
 
             // Fallback for when a whole pageSize-row page fails to decode (a corrupt blob or
@@ -575,7 +588,7 @@ class ConversationRepository(
                         continue
                     }
                     if (row.isEmpty()) return i
-                    nodes.add(toMessageNode(row.single()))
+                    toMessageNode(row.single())?.let { nodes.add(it) }
                 }
                 return pageSize
             }
@@ -597,7 +610,7 @@ class ConversationRepository(
                     if (consumed < pageSize) break else continue
                 }
                 if (page.isEmpty()) break
-                page.forEach { entity -> nodes.add(toMessageNode(entity)) }
+                page.forEach { entity -> toMessageNode(entity)?.let { nodes.add(it) } }
                 offset += page.size
             }
             nodes
