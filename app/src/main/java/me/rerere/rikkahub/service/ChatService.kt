@@ -190,6 +190,7 @@ import me.rerere.rikkahub.service.mission.MissionSessions
 import me.rerere.rikkahub.runtime.usage.UsagePurpose
 
 private const val TAG = "ChatService"
+private const val MAX_RETAINED_ERRORS = 50
 private const val COMPACTION_REQUEST_TIMEOUT_MS = 3 * 60_000L
 private const val COMPACTION_TOTAL_TIMEOUT_MS = 8 * 60_000L
 
@@ -735,7 +736,13 @@ class ChatService(
         solution: ChatErrorSolution? = null,
     ) {
         if (error is CancellationException) return
-        _errors.update { it + ChatError(title = title, error = error, conversationId = conversationId, solution = solution) }
+        _errors.update {
+            // Cap the retained errors: nothing else bounds this list, and headless /
+            // cron surfaces never dismiss errors, so a flapping provider would grow it
+            // (and every SSE subscriber's copy of it) for the life of the process.
+            (it + ChatError(title = title, error = error, conversationId = conversationId, solution = solution))
+                .takeLast(MAX_RETAINED_ERRORS)
+        }
     }
 
     fun dismissError(id: Uuid) {
@@ -835,6 +842,15 @@ class ChatService(
             // sessions where many conversations cycle in and out of memory.
             sessionMutexes.remove(conversationId)
             compactionMutexes.remove(conversationId)
+            // Ephemeral per-conversation bookkeeping that used to outlive the session:
+            // none of it is persisted, and toolActivations is documented session-scoped
+            // ("losing it merely costs one extra tool_search round-trip"). Headless and
+            // cron runs mint a fresh conversation per run, so without this these four
+            // maps grew by one entry per run for the life of the process.
+            toolActivations.remove(conversationId)
+            generationFailures.remove(conversationId)
+            toolUnavailableWarned.remove(conversationId)
+            conversationNotificationSequence.remove(conversationId)
             if (!pendingStreamingPersistence.containsKey(conversationId)) {
                 persistenceMutexes.remove(conversationId)
                 lastStreamingPersistAt.remove(conversationId)
@@ -855,6 +871,10 @@ class ChatService(
         session.cleanup()
         sessionMutexes.remove(conversationId)
         compactionMutexes.remove(conversationId)
+        toolActivations.remove(conversationId)
+        generationFailures.remove(conversationId)
+        toolUnavailableWarned.remove(conversationId)
+        conversationNotificationSequence.remove(conversationId)
         pendingStreamingPersistence.remove(conversationId)
         lastStreamingPersistAt.remove(conversationId)
         persistenceMutexes.remove(conversationId)
