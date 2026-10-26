@@ -14,8 +14,12 @@ import org.junit.Test
  */
 class ChatCompletionsStreamDecoderTest {
 
+    // Single line on purpose: the decoder splits SSE data on '\n' and parses each line as
+    // JSON, like the real wire format - a pretty-printed payload would not survive it.
     private fun deltaEvent(annotations: String): SseEvent = SseEvent(
-        data = """{"id":"chatcmpl-1","model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","content":"hello","annotations":$annotations}}]}"""
+        data = "{\"id\":\"chatcmpl-1\",\"model\":\"gpt-test\"," +
+            "\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello\"," +
+            "\"annotations\":$annotations}}]}"
     )
 
     @Test
@@ -23,13 +27,11 @@ class ChatCompletionsStreamDecoderTest {
         val decoder = ChatCompletionsStreamDecoder()
         val chunks = decoder.accept(
             deltaEvent(
-                """[
-                  {"type":"url_citation","url_citation":{"title":"Example","url":"https://example.com"}},
-                  {"type":"file_citation","file_citation":{"filename":"report.pdf"}},
-                  {"type":"some_future_type"},
-                  {"no_type_here":true},
-                  "not even an object"
-                ]"""
+                "[{\"type\":\"url_citation\",\"url_citation\":{\"title\":\"Example\",\"url\":\"https://example.com\"}}," +
+                    "{\"type\":\"file_citation\",\"file_citation\":{\"filename\":\"report.pdf\"}}," +
+                    "{\"type\":\"some_future_type\"}," +
+                    "{\"no_type_here\":true}," +
+                    "\"not even an object\"]"
             )
         ).chunks
 
@@ -47,7 +49,7 @@ class ChatCompletionsStreamDecoderTest {
     @Test
     fun `a stream with only unknown annotations still finishes normally`() {
         val decoder = ChatCompletionsStreamDecoder()
-        decoder.accept(deltaEvent("""[{"type":"file_path","file_id":"file-123"}]"""))
+        decoder.accept(deltaEvent("[{\"type\":\"file_path\",\"file_id\":\"file-123\"}]"))
         val result = decoder.accept(SseEvent(data = "[DONE]"))
 
         assertTrue(result.completed)
